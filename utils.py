@@ -1,3 +1,4 @@
+import os
 from monotonic_align import maximum_path
 from monotonic_align import mask_from_lens
 from monotonic_align.core import maximum_path_c
@@ -10,6 +11,8 @@ import torchaudio
 import librosa
 import matplotlib.pyplot as plt
 from munch import Munch
+import subprocess
+import re
 
 def maximum_path(neg_cent, mask):
   """ Cython optimized version.
@@ -71,4 +74,44 @@ def recursive_munch(d):
 def log_print(message, logger):
     logger.info(message)
     print(message)
+
+def set_path(path):
+    if os.path.isdir(path):
+        print('use existed path: {}'.format(path))
+    else:
+        os.makedirs(path)
+        print('created path: {}'.format(path))
+
+def get_hostname():
+    hostname = subprocess.check_output('hostname').decode('ascii').rstrip()
+    return hostname
+
+def get_gpu_info(device=-1):
+    """get gpu info, device is the index of GPU device, e.g., 0, 1, 2, or 3"""
+    line_as_bytes = subprocess.check_output("nvidia-smi -L", shell=True)
+    lines = line_as_bytes.decode("ascii").split('\n')
+    lines = [line for line in lines if line != '']
+    nlines = len(lines)
+    if device == -1:
+        lines = [re.sub("\(.*?\)","()", line).replace('()','').strip() for line in lines]
+        string = '\n'.join(lines)
+        # print(string)
+    elif device >= 0 and device < nlines:
+        line = lines[device]
+        string = re.sub("\(.*?\)","()", line).replace('()','').strip()
+    else:
+        string = ''
+        raise Exception('device: {} out of range (0~{})'.format(device,nlines-1))
+    return string
+
+def read_manifest(manifest_file):
+    lines = open(manifest_file, 'r').readlines()
+    reference_dicts = {}
+    for i, line in enumerate(lines):
+        parts = line.split('|')
+        ref_path = parts[0].strip()
+        ref_path = os.path.join(os.getcwd(), ref_path)
+        text = parts[1].strip()
+        reference_dicts[i] = (ref_path, text)
+    return reference_dicts
     
