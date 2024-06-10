@@ -41,6 +41,8 @@ logger = get_logger(__name__, log_level="DEBUG")
 @click.command()
 @click.option('-p', '--config_path', default='Configs/config.yml', type=str)
 def main(config_path):
+
+    # config_path = 'Configs/config_ljspeech_first.yml'
     config = yaml.safe_load(open(config_path))
 
     log_dir = config['log_dir']
@@ -52,7 +54,7 @@ def main(config_path):
         writer = SummaryWriter(log_dir + "/tensorboard")
 
     # write logs
-    file_handler = logging.FileHandler(osp.join(log_dir, 'train.log'))
+    file_handler = logging.FileHandler(osp.join(log_dir, 'train_first.log'))
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter('%(levelname)s:%(asctime)s: %(message)s'))
     logger.logger.addHandler(file_handler)
@@ -61,9 +63,8 @@ def main(config_path):
     device = accelerator.device
     
     epochs = config.get('epochs_1st', 200)
-    save_freq = config.get('save_freq', 2)
     log_interval = config.get('log_interval', 10)
-    saving_epoch = config.get('save_freq', 2)
+    save_freq = config.get('save_freq', 2)
     
     data_params = config.get('data_params', None)
     sr = config['preprocess_params'].get('sr', 24000)
@@ -78,17 +79,38 @@ def main(config_path):
     # load data
     train_list, val_list = get_data_path_list(train_path, val_path)
 
+    # # example (using the original argument names for debugging)
+    # path_list = val_list
+    # validation = True
+    # OOD_data = "Data/OOD_texts.txt"
+    # collate_config = {}
+    # val_dataloader = build_dataloader(path_list,
+    #                                 root_path,
+    #                                 sr,
+    #                                 validation=validation,
+    #                                 OOD_data=OOD_data,
+    #                                 min_length=min_length,
+    #                                 batch_size=batch_size,
+    #                                 validation=True,
+    #                                 num_workers=0,
+    #                                 device=device,
+    #                                 collection_config={},
+    #                                 dataset_config={})
+
     train_dataloader = build_dataloader(train_list,
                                         root_path,
+                                        sr,
                                         OOD_data=OOD_data,
                                         min_length=min_length,
                                         batch_size=batch_size,
+                                        validation=False,
                                         num_workers=2,
                                         dataset_config={},
                                         device=device)
 
     val_dataloader = build_dataloader(val_list,
                                       root_path,
+                                      sr,
                                       OOD_data=OOD_data,
                                       min_length=min_length,
                                       batch_size=batch_size,
@@ -96,6 +118,26 @@ def main(config_path):
                                       num_workers=0,
                                       device=device,
                                       dataset_config={})
+
+    # train_dataloader = build_dataloader(train_list,
+    #                                     root_path,
+    #                                     OOD_data=OOD_data,
+    #                                     min_length=min_length,
+    #                                     batch_size=batch_size,
+    #                                     validation=False,
+    #                                     num_workers=2,
+    #                                     dataset_config={},
+    #                                     device=device)
+
+    # val_dataloader = build_dataloader(val_list,
+    #                                   root_path,
+    #                                   OOD_data=OOD_data,
+    #                                   min_length=min_length,
+    #                                   batch_size=batch_size,
+    #                                   validation=True,
+    #                                   num_workers=0,
+    #                                   device=device,
+    #                                   dataset_config={})
     
     with accelerator.main_process_first():
         # load pretrained ASR model
@@ -119,7 +161,9 @@ def main(config_path):
         "steps_per_epoch": len(train_dataloader),
     }
     
+    # construct recursive model parameters
     model_params = recursive_munch(config['model_params'])
+
     multispeaker = model_params.multispeaker
     model = build_model(model_params, text_aligner, pitch_extractor, plbert)
 
@@ -178,7 +222,10 @@ def main(config_path):
         _ = [model[key].train() for key in model]
 
         for i, batch in enumerate(train_dataloader):
+
+            # get 0th-part of the batch (waves)
             waves = batch[0]
+            # send the remaining part of the batch to device
             batch = [b.to(device) for b in batch[1:]]
             texts, input_lengths, _, _, mels, mel_input_length, _ = batch
             
@@ -248,10 +295,23 @@ def main(config_path):
                 
             with torch.no_grad():    
                 real_norm = log_norm(gt.unsqueeze(1)).squeeze(1).detach()
+                # gt.shape: [4, 80, 172]
+                # gt.unsqueeze(1).shape: [4, 1, 80, 172]
                 F0_real, _, _ = model.pitch_extractor(gt.unsqueeze(1))
+                # F0_real.shape: [4, 172]
+
+            # import matplotlib.pyplot as plt
+            # F0_real_np = F0_real.cpu().detach().numpy()
+            # plt.plot(np.transpose(F0_real_np))
+            # plt.savefig('train_first_F1_real.png')
                 
             s = model.style_encoder(st.unsqueeze(1) if multispeaker else gt.unsqueeze(1))
             
+            # check shape with (batch_size=4, max_len=200)
+            # en.shape: [4, 512, 100]
+            # F0_real.shape: [4,200]
+            # real_norm.shape: [4,200]
+            # s.shape: [4,128]
             y_rec = model.decoder(en, F0_real, real_norm, s)
             
             # discriminator loss
@@ -278,13 +338,15 @@ def main(config_path):
                 loss_mono = F.l1_loss(s2s_attn, s2s_attn_mono) * 10
                     
                 loss_gen_all = gl(wav.detach().unsqueeze(1).float(), y_rec).mean()
+                # wav.detach().shape: [4, 51600]
+                # y_rec.shape: [4, 1, 51600]
                 loss_slm = wl(wav.detach(), y_rec).mean()
                 
                 g_loss = loss_params.lambda_mel * loss_mel + \
-                loss_params.lambda_mono * loss_mono + \
-                loss_params.lambda_s2s * loss_s2s + \
-                loss_params.lambda_gen * loss_gen_all + \
-                loss_params.lambda_slm * loss_slm
+                         loss_params.lambda_mono * loss_mono + \
+                         loss_params.lambda_s2s * loss_s2s + \
+                         loss_params.lambda_gen * loss_gen_all + \
+                         loss_params.lambda_slm * loss_slm
 
             else:
                 loss_s2s = 0
@@ -413,7 +475,7 @@ def main(config_path):
                     if bib >= 6:
                         break
 
-            if epoch % saving_epoch == 0:
+            if epoch % save_freq == 0:
                 if (loss_test / iters_test) < best_loss:
                     best_loss = loss_test / iters_test
                 print('Saving..')

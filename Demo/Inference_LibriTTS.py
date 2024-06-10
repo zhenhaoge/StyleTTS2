@@ -103,14 +103,13 @@ def inference(text, ref_s, alpha = 0.3, beta = 0.7, diffusion_steps=5, embedding
         d_en = model.bert_encoder(bert_dur).transpose(-1, -2) 
 
         s_pred = sampler(noise = torch.randn((1, 256)).unsqueeze(1).to(device), 
-                                          embedding=bert_dur,
-                                          embedding_scale=embedding_scale,
-                                            features=ref_s, # reference from the same speaker as the embedding
-                                             num_steps=diffusion_steps).squeeze(1)
+            embedding=bert_dur,
+            embedding_scale=embedding_scale,
+            features=ref_s, # reference from the same speaker as the embedding
+            num_steps=diffusion_steps).squeeze(1)
 
-
-        s = s_pred[:, 128:]
         ref = s_pred[:, :128]
+        s = s_pred[:, 128:]
 
         ref = alpha * ref + (1 - alpha)  * ref_s[:, :128]
         s = beta * s + (1 - beta)  * ref_s[:, 128:]
@@ -122,7 +121,6 @@ def inference(text, ref_s, alpha = 0.3, beta = 0.7, diffusion_steps=5, embedding
 
         duration = torch.sigmoid(duration).sum(axis=-1)
         pred_dur = torch.round(duration.squeeze()).clamp(min=1)
-
 
         pred_aln_trg = torch.zeros(input_lengths, int(pred_dur.sum().data))
         c_frame = 0
@@ -147,11 +145,11 @@ def inference(text, ref_s, alpha = 0.3, beta = 0.7, diffusion_steps=5, embedding
             asr_new[:, :, 1:] = asr[:, :, 0:-1]
             asr = asr_new
 
-        out = model.decoder(asr, 
-                                F0_pred, N_pred, ref.squeeze().unsqueeze(0))
-    
-        
-    return out.squeeze().cpu().numpy()[..., :-50] # weird pulse at the end of the model, need to be fixed later        
+        out = model.decoder(asr, F0_pred, N_pred, ref.squeeze().unsqueeze(0))
+        out2 = out.squeeze().cpu().numpy()[..., :-50] # weird pulse at the end of the model, need to be fixed later
+        # out2 = out.squeeze().cpu().detach().numpy()[..., :-50] 
+
+    return out2     
 
 def LFinference(text, s_prev, ref_s, alpha = 0.3, beta = 0.7, t = 0.7, diffusion_steps=5, embedding_scale=1):
     text = text.strip()
@@ -279,10 +277,8 @@ def STinference(text, ref_s, ref_text, alpha = 0.3, beta = 0.7, diffusion_steps=
 
         x, _ = model.predictor.lstm(d)
         duration = model.predictor.duration_proj(x)
-
         duration = torch.sigmoid(duration).sum(axis=-1)
         pred_dur = torch.round(duration.squeeze()).clamp(min=1)
-
 
         pred_aln_trg = torch.zeros(input_lengths, int(pred_dur.sum().data))
         c_frame = 0
@@ -386,7 +382,7 @@ if __name__ == '__main__':
     # args.config_path = os.path.join(work_path, 'Models', 'LibriTTS', 'config.yml')
     # args.model_path = os.path.join(work_path, 'Models', 'LibriTTS', 'epochs_2nd_00020.pth')
     # args.output_path = os.path.join(work_path, 'Outputs', 'Demo', 'LibriTTS')
-    # args.device = 'cuda:1' # 'cuda', 'cuda:x', or 'cpu'
+    # args.device = 'cuda:2' # 'cuda', 'cuda:x', or 'cpu'
 
     # set and create output dir (if needed)
     set_path(args.output_path)
@@ -416,6 +412,7 @@ if __name__ == '__main__':
         gpu_info = get_gpu_info(device_id)
     else:
         gpu_info = ''
+    print('GPU info: {} @ {}'.format(gpu_info, hostname))
 
     ## Load models
 

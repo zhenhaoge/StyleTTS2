@@ -65,21 +65,6 @@ def preprocess(wave):
     mel_tensor = (torch.log(1e-5 + mel_tensor.unsqueeze(0)) - mean) / std
     return mel_tensor
 
-def find_phone_col_idx(entry, min_num_char=5):
-    parts = entry.strip().split('|')
-    idx = 0
-    for i, part in enumerate(parts):
-        part_nospace = part.replace(' ', '')
-        L = min(len(part_nospace), min_num_char)
-        cnt = 0
-        for c in part_nospace[:L]:
-            if c in _letters_ipa:
-                cnt += 1
-        if cnt/L > 0:
-            idx = i
-            break
-    return idx
-
 class FilePathDataset(torch.utils.data.Dataset):
     def __init__(self,
                  data_list,
@@ -95,64 +80,59 @@ class FilePathDataset(torch.utils.data.Dataset):
         mel_params = MEL_PARAMS
 
         _data_list = [l.strip().split('|') for l in data_list]
-        # dataset_data_list = [data if data[-1].isdigit() else (*data, 0) for data in _data_list]
-        self.data_list = [data if data[-1].isdigit() else (*data, 0) for data in _data_list]
+        # dataset_data_list = [data if len(data) == 4 else (*data, 0) for data in _data_list]
+        self.data_list = [data if len(data) == 3 else (*data, 0) for data in _data_list]
         # dataset_text_cleaner = TextCleaner()
         self.text_cleaner = TextCleaner()
+        # dataset_sr = sr
         self.sr = sr
 
         # dataset_df = pd.DataFrame(dataset_data_list)
         self.df = pd.DataFrame(self.data_list)
 
+        # dataset_to_melspec = torchaudio.transforms.MelSpectrogram(**MEL_PARAMS)
         self.to_melspec = torchaudio.transforms.MelSpectrogram(**MEL_PARAMS)
 
+        # dataset_mean, dataset_std = -4, 4
         self.mean, self.std = -4, 4
+        # dataset_data_augmentation = data_augmentation and (not validation)
         self.data_augmentation = data_augmentation and (not validation)
+        # dataset_max_mel_length = 192
         self.max_mel_length = 192
         
+        # dataset_min_length = min_length
         self.min_length = min_length
-
-        # read OOD data
         with open(OOD_data, 'r', encoding='utf-8') as f:
             tl = f.readlines()
-
-        # get the idx of ipa phone column
-        # (checking if the first few chars in each column contains ipa phones)
-        idx = find_phone_col_idx(tl[0])
+        # idx=1 if col[0] contains '.wav', else, idx=0     
+        idx = 1 if '.wav' in tl[0].split('|')[0] else 0
 
         # get phone texts
+        # dataset_ptexts = [t.split('|')[idx] for t in tl]
         self.ptexts = [t.split('|')[idx] for t in tl]
         
-        # dataset_root_path = root_path
         self.root_path = root_path
 
     def __len__(self):
         return len(self.data_list)
 
-    def __getitem__(self, idx):
-
-        # data = dataset_data_list[idx]
+    def __getitem__(self, idx):        
         data = self.data_list[idx]
         path = data[0]
         
-        wave, token, speaker_id = self._load_tensor(data)
+        wave, text_tensor, speaker_id = self._load_tensor(data)
         
         mel_tensor = preprocess(wave).squeeze()
         
         acoustic_feature = mel_tensor.squeeze()
-        # truncate 0 or 1 column (2nd dim) at the end to make the 2nd dim a even number
         length_feature = acoustic_feature.size(1)
         acoustic_feature = acoustic_feature[:, :(length_feature - length_feature % 2)]
         
-        # get a random in-domain reference audio sample
-        # idx_speaker = dataset_df.shape[1] - 1
-        idx_speaker = self.df.shape[1] - 1
-        # ref_data = (dataset_df[dataset_df[idx_speaker] == str(speaker_id)]).sample(n=1).iloc[0].tolist()
-        ref_data = (self.df[self.df[idx_speaker] == str(speaker_id)]).sample(n=1).iloc[0].tolist()
-        # get the reference mel and ref speaker label
-        ref_mel_tensor, ref_label = self._load_data(ref_data)
+        # get reference sample
+        ref_data = (self.df[self.df[2] == str(speaker_id)]).sample(n=1).iloc[0].tolist()
+        ref_mel_tensor, ref_label = self._load_data(ref_data[:3])
         
-        # get a random out-of-domain (OOD) reference text sample
+        # get OOD text
         
         ps = ""
         
@@ -160,53 +140,39 @@ class FilePathDataset(torch.utils.data.Dataset):
             rand_idx = np.random.randint(0, len(self.ptexts) - 1)
             ps = self.ptexts[rand_idx]
             
-            ref_token = self.text_cleaner(ps)
-            ref_token.insert(0, 0)
-            ref_token.append(0)
+            text = self.text_cleaner(ps)
+            text.insert(0, 0)
+            text.append(0)
 
-            ref_token = torch.LongTensor(ref_token)
+            ref_text = torch.LongTensor(text)
         
-        return speaker_id, acoustic_feature, token, ref_token, ref_mel_tensor, ref_label, path, wave
+        return speaker_id, acoustic_feature, text_tensor, ref_text, ref_mel_tensor, ref_label, path, wave
 
     def _load_tensor(self, data):
-        """data can be either 3 parts (rel path, text, ptext, speaker_id) or 4 parts"""
-        ncols = len(data)
-        if ncols == 3:
-            wave_path, ptext, speaker_id = data
-        elif ncols == 4:
-            wave_path, _, ptext, speaker_id = data
-        else:
-            raise Exception('load tensor: check manifest file, #cols={}!'.format(ncols))
+        wave_path, text, speaker_id = data
         speaker_id = int(speaker_id)
-        # wave, sr = sf.read(osp.join(dataset_root_path, wave_path))
         wave, sr = sf.read(osp.join(self.root_path, wave_path))
         if wave.shape[-1] == 2:
             wave = wave[:, 0].squeeze()
-        if sr != self.sr:
-            wave = librosa.resample(wave, orig_sr=sr, target_sr=self.sr)
-            # print('resampled {} from sr:{} to sr:{}'.format(wave_path, sr, self.sr))
-
-        # append 5000 samples of 0s to the beginning and to the end
+        if sr != 24000:
+            wave = librosa.resample(wave, orig_sr=sr, target_sr=24000)
+            # print(wave_path, sr)
+            
         wave = np.concatenate([np.zeros([5000]), wave, np.zeros([5000])], axis=0)
         
-        # convert symbol to token
-        # token = dataset_text_cleaner(ptext)
-        token = self.text_cleaner(ptext)
+        text = self.text_cleaner(text)
         
-        # append 0 (pad/silence) token to both end
-        token.insert(0, 0)
-        token.append(0)
+        text.insert(0, 0)
+        text.append(0)
         
-        token = torch.LongTensor(token)
+        text = torch.LongTensor(text)
 
-        return wave, token, speaker_id
+        return wave, text, speaker_id
 
     def _load_data(self, data):
-        wave, _, speaker_id = self._load_tensor(data)
-
+        wave, text_tensor, speaker_id = self._load_tensor(data)
         mel_tensor = preprocess(wave).squeeze()
 
-        # randomly get a segment with max_mel_length in mel_tensor
         mel_length = mel_tensor.size(1)
         if mel_length > self.max_mel_length:
             random_start = np.random.randint(0, mel_length - self.max_mel_length)
@@ -279,7 +245,6 @@ class Collater(object):
 
 def build_dataloader(path_list,
                      root_path,
-                     sr,
                      validation=False,
                      OOD_data="Data/OOD_texts.txt",
                      min_length=50,
@@ -289,13 +254,7 @@ def build_dataloader(path_list,
                      collate_config={},
                      dataset_config={}):
     
-    dataset = FilePathDataset(path_list,
-                              root_path,
-                              sr,
-                              OOD_data=OOD_data,
-                              min_length=min_length,
-                              validation=validation,
-                              **dataset_config)
+    dataset = FilePathDataset(path_list, root_path, OOD_data=OOD_data, min_length=min_length, validation=validation, **dataset_config)
     collate_fn = Collater(**collate_config)
     data_loader = DataLoader(dataset,
                              batch_size=batch_size,

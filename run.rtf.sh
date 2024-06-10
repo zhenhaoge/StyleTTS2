@@ -13,7 +13,10 @@ model_path=$ROOT_DIR/Models/LibriTTS
 model_name=epochs_2nd_00020.pth
 output_path=$ROOT_DIR/Outputs/RTF
 manifest_file=$output_path/manifest.txt
-device="cuda:2"
+
+# set device
+# if device=cpu (export OMP_NUM_THREADS=1 to use single CPU)
+device="cpu" # options: cpu, cuda, or cuda:x
 
 # tuning parameters
 diffusion_steps=5

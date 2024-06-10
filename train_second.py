@@ -51,6 +51,8 @@ logger.addHandler(handler)
 @click.command()
 @click.option('-p', '--config_path', default='Configs/config.yml', type=str)
 def main(config_path):
+
+    # config_path = 'Configs/config_ljspeech_second.yml'
     config = yaml.safe_load(open(config_path))
     
     log_dir = config['log_dir']
@@ -59,18 +61,17 @@ def main(config_path):
     writer = SummaryWriter(log_dir + "/tensorboard")
 
     # write logs
-    file_handler = logging.FileHandler(osp.join(log_dir, 'train.log'))
+    file_handler = logging.FileHandler(osp.join(log_dir, 'train_second.log'))
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter('%(levelname)s:%(asctime)s: %(message)s'))
     logger.addHandler(file_handler)
 
-    
     batch_size = config.get('batch_size', 10)
 
     epochs = config.get('epochs_2nd', 200)
     save_freq = config.get('save_freq', 2)
     log_interval = config.get('log_interval', 10)
-    saving_epoch = config.get('save_freq', 2)
+    save_freq = config.get('save_freq', 2)
 
     data_params = config.get('data_params', None)
     sr = config['preprocess_params'].get('sr', 24000)
@@ -93,6 +94,7 @@ def main(config_path):
 
     train_dataloader = build_dataloader(train_list,
                                         root_path,
+                                        sr,
                                         OOD_data=OOD_data,
                                         min_length=min_length,
                                         batch_size=batch_size,
@@ -102,6 +104,7 @@ def main(config_path):
 
     val_dataloader = build_dataloader(val_list,
                                       root_path,
+                                      sr,
                                       OOD_data=OOD_data,
                                       min_length=min_length,
                                       batch_size=batch_size,
@@ -165,9 +168,9 @@ def main(config_path):
                    sr, 
                    model_params.slm.sr).to(device)
 
-    gl = MyDataParallel(gl)
-    dl = MyDataParallel(dl)
-    wl = MyDataParallel(wl)
+    # gl = MyDataParallel(gl)
+    # dl = MyDataParallel(dl)
+    # wl = MyDataParallel(wl)
     
     sampler = DiffusionSampler(
         model.diffusion.diffusion,
@@ -253,11 +256,11 @@ def main(config_path):
         model.msd.train()
         model.mpd.train()
 
-
         if epoch >= diff_epoch:
             start_ds = True
 
         for i, batch in enumerate(train_dataloader):
+
             waves = batch[0]
             batch = [b.to(device) for b in batch[1:]]
             texts, input_lengths, ref_texts, ref_lengths, mels, mel_input_length, ref_mels = batch
@@ -380,15 +383,31 @@ def main(config_path):
             s = model.style_encoder(st.unsqueeze(1) if multispeaker else gt.unsqueeze(1))
             
             with torch.no_grad():
+                # gt.shape: [4, 80, 200]
+                # gt.unsqueeze(1).shape: [4, 1, 80, 200]
                 F0_real, _, F0 = model.pitch_extractor(gt.unsqueeze(1))
+                if len(F0_real.shape) == 1 and F0_real.shape[0] == len(mel_input_length) * gt.shape[-1]:
+                    F0_real = torch.reshape(F0_real, (len(mel_input_length), gt.shape[-1]))
+            # with torch.no_grad():
                 F0 = F0.reshape(F0.shape[0], F0.shape[1] * 2, F0.shape[2], 1).squeeze()
+
+                # import matplotlib.pyplot as plt
+                # F0_real2_np = F0_real2.cpu().detach().numpy()
+                # plt.plot(np.transpose(F0_real2_np))
+                # plt.savefig('train_second_F1_real2.png')
 
                 asr_real = model.text_aligner.get_feature(gt)
 
                 N_real = log_norm(gt.unsqueeze(1)).squeeze(1)
                 
                 y_rec_gt = wav.unsqueeze(1)
-                y_rec_gt_pred = model.decoder(en, F0_real, N_real, s)
+
+                # check shape with (batch_size=4, max_len=200)
+                # en.shape: [4, 512, 100]
+                # F0_real.shape: [800]
+                # N_real.shape: [4, 200]
+                # s.shape: [4, 128]
+                y_rec_gt_pred = model.decoder(en, F0_real, N_real, s) # this line need to fix
 
                 if epoch >= joint_epoch:
                     # ground truth from recording
@@ -421,7 +440,12 @@ def main(config_path):
                 loss_gen_all = gl(wav, y_rec).mean()
             else:
                 loss_gen_all = 0
+            # wav.detach().squeeze().shape: [4, 60000]
+            # y_rec.squeeze().shape: [4, 60000]
             loss_lm = wl(wav.detach().squeeze(), y_rec.squeeze()).mean()
+            # wav.detach().shape: [4, 60000]
+            # y_rec.shape: [4, 1, 60000]
+            # loss_lm = wl(wav.detach(), y_rec).mean()
 
             loss_ce = 0
             loss_dur = 0
@@ -453,6 +477,7 @@ def main(config_path):
             running_loss += loss_mel.item()
             g_loss.backward()
             if torch.isnan(g_loss):
+                print('found NaN in g_loss!')
                 from IPython.core.debugger import set_trace
                 set_trace()
 
@@ -663,6 +688,7 @@ def main(config_path):
 
                     F0_real, _, F0 = model.pitch_extractor(gt.unsqueeze(1)) 
 
+                    # error: run into exception The size of tensor a (2560) must match the size of tensor b (640) at non-singleton dimension 1
                     loss_F0 = F.l1_loss(F0_real, F0_fake) / 10
 
                     loss_test += (loss_mel).mean()
@@ -767,7 +793,7 @@ def main(config_path):
                     if bib >= 5:
                         break
                             
-        if epoch % saving_epoch == 0:
+        if epoch % save_freq == 0:
             if (loss_test / iters_test) < best_loss:
                 best_loss = loss_test / iters_test
             print('Saving..')

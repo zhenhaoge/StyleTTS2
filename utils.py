@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from munch import Munch
 import subprocess
 import re
+import csv
 
 def maximum_path(neg_cent, mask):
   """ Cython optimized version.
@@ -114,4 +115,46 @@ def read_manifest(manifest_file):
         text = parts[1].strip()
         reference_dicts[i] = (ref_path, text)
     return reference_dicts
-    
+
+def get_fid(id_filepath):
+    lines = open(id_filepath, 'r').readlines()
+    # fids = [os.path.splitext(line.split('|')[0])[0] for line in lines]
+    fids = [line.split('|')[0] for line in lines]
+    return fids
+
+def get_fid2wav(wavfiles, data_path):
+    """get fid2wav dict (using the rel path as fid)"""
+    # fid2wav = {os.path.splitext(os.path.basename(wavfile))[0]:wavfile for wavfile in wavfiles}
+    fid2wav = {os.path.relpath(wavfile, data_path):wavfile for wavfile in wavfiles}
+    return fid2wav
+
+def get_fid2text(meta_filepath):
+    lines =  open(meta_filepath, 'r').readlines()
+    fid2text = {}
+    for line in lines:
+        parts = line.strip().split('|')
+        fid, text = parts[0], parts[1]
+        # text = clean_text(text,
+        #     convert_to_ascii=convert_to_ascii, convert_to_lowercase=convert_to_lowercase)
+        fid2text[fid] = text
+    return fid2text
+
+def get_fid2ps(manifest_filepath, idx_fid, idx_ps, delimiter='|'):
+    lines = open(manifest_filepath, 'r').readlines()
+    fid2ps = {}
+    for line in lines:
+        parts = line.strip().split(delimiter)
+        fid, ps = parts[idx_fid], parts[idx_ps]
+        # fid = os.path.splitext(fid)[0]
+        fid2ps[fid] = ps
+    return fid2ps
+
+def tuple2csv(tuple_list, csvname, delimiter=',', verbose=True):
+    with open(csvname, 'w', newline='') as f:
+        csv_out = csv.writer(f, delimiter=delimiter)
+        n = len(tuple_list)
+        for i in range(n):
+            csv_out.writerow(list(tuple_list[i]))
+    if verbose:
+        print('{} saved!'.format(csvname))
+
