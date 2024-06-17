@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 import torch
-from pyannote.audio import Inference
+import glob
 
 torch.manual_seed(0)
 torch.backends.cudnn.benchmark = False
@@ -51,6 +51,7 @@ textclenaer = TextCleaner()
 from infer_utils import length_to_mask
 from infer_utils import compute_style_from_path as compute_style
 
+from pyannote.audio import Inference
 spkr_embedding = Inference("pyannote/embedding", window="whole")
 
 def get_audio(speaker_path, meter, sample_rate=16000, mono_channel=True):
@@ -361,6 +362,11 @@ def run_STinfer(text, ref_s, ref_text, alpha=0.3, beta=0.7, diffusion_steps=5, e
 
     return wav, rtf, (duration_proc, duration_out)
 
+def filter_path(paths, keywords):
+    for kw in keywords:
+        paths = [f for f in paths if kw not in f]
+    return paths
+
 def parse_args():
     usage = 'usage: inference demo for LibriTTS'
     parser = argparse.ArgumentParser(description=usage)
@@ -382,7 +388,7 @@ if __name__ == '__main__':
     # args.config_path = os.path.join(work_path, 'Models', 'LibriTTS', 'config.yml')
     # args.model_path = os.path.join(work_path, 'Models', 'LibriTTS', 'epochs_2nd_00020.pth')
     # args.output_path = os.path.join(work_path, 'Outputs', 'Demo', 'LibriTTS')
-    # args.device = 'cuda:2' # 'cuda', 'cuda:x', or 'cpu'
+    # args.device = 'cuda:0' # 'cuda', 'cuda:x', or 'cpu'
 
     # set and create output dir (if needed)
     set_path(args.output_path)
@@ -816,9 +822,8 @@ if __name__ == '__main__':
     print('average RTF (expressive, unseen speakers, diffusion_steps: {}, embedding_scale: {}): {:.4f}'.format(
         diffusion_steps, embedding_scale, rtf_avg))
 
-    #%% Zero-shot speaker adapatation
+    #%% Zero-shot speaker adapatation 1 (Acoustic Environment Maintenance)
 
-    # Acoustic Environment Maintenance 
     # maintain the acoustic environment in the speaker (timbre) -> alpha = 0 (speaker as close to the refrence as possible)
     # change the prosody (beta) acording to the text
 
@@ -888,7 +893,8 @@ if __name__ == '__main__':
     print('average RTF (adaption, unseen speakers, diffusion_steps: {}, embedding_scale: {}): {:.4f}'.format(
         diffusion_steps, embedding_scale, rtf_avg))
 
-    #%% Speaker's Emotion Maintenance
+    #%% Zero-shot speaker adapatation 2 (Speaker's Emotion Maintenance)
+
     # maintain speaker's emotion (prosody) -> beta = 0.1 to make the speaker as closer to the reference as possible
     # while having some diversity through the slight timbre change (small alpha, e.g. alpha=0.3)
 
@@ -1360,5 +1366,184 @@ if __name__ == '__main__':
 
     rtf_avg = np.mean(rtfs)
     print('average RTF (basic, seen speakers, diffusion_steps: {}, embedding_scale: {}): {:.4f}'.format(
+        diffusion_steps, embedding_scale, rtf_avg))
+
+    #%% Cross-language zero-shot speaker adapatation 1 (Acoustic Environment Maintenance)
+
+    # maintain the acoustic environment in the speaker (timbre) -> alpha = 0 (speaker as close to the refrence as possible)
+    # change the prosody (beta) acording to the text
+
+    exp_id = 11
+    output_path = os.path.join(args.output_path, 'exp-{:02d}'.format(exp_id))
+    os.makedirs(output_path, exist_ok=True)
+    print('output path for exp {}: {}'.format(exp_id, output_path))
+
+    recording_id = 'MARCHE_AssessmentTacticalEnvironment'
+    voice = 'lada'
+    stress = 'dictionary'
+    wav_folder = '{}-{}'.format(voice, stress)
+    ref_path = os.path.join(home_path, 'code', 'repo', 'ukr-tts', 'outputs', 'sofw', 'espnet',
+        recording_id, wav_folder)
+    ref_wavpaths = sorted(glob.glob(os.path.join(ref_path, '*.wav')))
+    keywords = ['.16000', '_paired', '_unpaired']
+    ref_wavpaths = filter_path(ref_wavpaths, keywords)
+    ref_wavpaths = ref_wavpaths[:5]
+
+    texts = ["Hey guys, my name is Sam, and welcome to Prep Medic.",
+             "This week's video, we are talking about the March algorithm.",
+             "All right, guys, so the March algorithm is the assessment mode that we use in a tactical environment.",
+             "A lot of other environments are starting to adapt it like civilian EMS, and essentially, it's a way of addressing life threats on our patients.",
+             "So when we come up to a patient in a non-permissive environment such as a tactical situation, our number one priority is always going to be neutralizing the threat."]
+
+    reference_dicts = {str(i+1): (ref_wavpaths[i], texts[i]) for i in range(5)}
+    nsamples = len(reference_dicts)
+
+    for i, v in enumerate(reference_dicts.values()):
+        ref_path, text = v
+        ref_id = os.path.splitext(os.path.basename(ref_path))[0]
+        reference_filename = 'reference-{}-{}.wav'.format(i, ref_id)
+        reference_filepath = os.path.join(output_path, reference_filename)
+        ref_wav, sr = librosa.load(ref_path)
+        if sr == 24000:
+            copyfile(ref_path, reference_filepath)
+            print('copied reference file: {} -> {}'.format(ref_path, reference_filepath))
+        else:
+            ref_wav2 = get_audio(ref_path, meter, sample_rate=24000)
+            sf.write(reference_filepath, ref_wav2, 24000)
+            print('resampled reference file: {} ({}) -> {} (24000)'.format(ref_path, sr, reference_filepath))
+
+    rtfs = [0 for _ in range(nsamples)]
+    diffusion_steps = 10
+    embedding_scale = 1
+    alpha = 0.0
+    beta = 1.0
+    for i, v in enumerate(reference_dicts.values()):
+        ref_path, text = v
+
+        ref_s = compute_style(model, ref_path, device=device)
+
+        ref_wav, _ = librosa.load(ref_path, sr=24000)
+        duration_ref = len(ref_wav) / 24000
+
+        wav, rtf, (duration_proc, duration_out) = run_infer(text, ref_s, diffusion_steps, embedding_scale, alpha=alpha, beta=beta)
+        print('acoustic environment maintenance, unseen speakers, diffusion steps: {}, embedding scale: {}, alpha: {}, beta: {}'.format(
+            diffusion_steps, embedding_scale, alpha, beta))
+        print("RTF: {:.4f} ({:.4f} / {:.4f})".format(rtf, duration_proc, duration_out))
+
+        ref_id = os.path.splitext(os.path.basename(ref_path))[0]
+        output_filename = 'aem-{}-{}-{}-{}-{}-{}.wav'.format(i, ref_id, diffusion_steps, embedding_scale, alpha, beta)
+        output_filepath = os.path.join(output_path, output_filename)
+        sf.write(output_filepath, wav, 24000)
+        print('wrote output file: {}'.format(output_filepath))
+
+        ref_wav2 = get_audio(ref_path, meter)
+        wav2 = get_audio(output_filepath, meter)
+        ref_spkr_embedding = extract_spkr_embedding(ref_wav2, 24000)
+        syn_spkr_embedding = extract_spkr_embedding(wav2, 24000)
+        sss = cos_sim(ref_spkr_embedding, syn_spkr_embedding)
+        print('sss: {:.3f}'.format(sss))
+
+        meta = {'syn-wav': output_filepath, 'text': text, 'ref-wav': ref_path, 'dur-ref': duration_ref,
+                'dur-proc': duration_proc, 'dur-syn': duration_out, 'rtf': rtf, 'diffusion-steps': diffusion_steps,
+                'embedding-scale': embedding_scale, 'alpha': alpha, 'beta': beta, 'seen-speaker': False,
+                'sss': float(sss), 'hostname': hostname, 'gpu': gpu_info, 'exp-id': exp_id, 'topic': 'acoustic environment maintenance'}
+        output_jsonfile = os.path.join(output_path, output_filename.replace('.wav', '.json'))
+        with open(output_jsonfile, 'w') as fp:
+            json.dump(meta, fp, indent=2)
+
+        rtfs[i] = rtf
+
+    rtf_avg = np.mean(rtfs)
+    print('average RTF (adaption, unseen speakers, diffusion_steps: {}, embedding_scale: {}): {:.4f}'.format(
+        diffusion_steps, embedding_scale, rtf_avg))
+
+    #%% Zero-shot speaker adapatation 2 (Speaker's Emotion Maintenance)
+
+    # maintain speaker's emotion (prosody) -> beta = 0.1 to make the speaker as closer to the reference as possible
+    # while having some diversity through the slight timbre change (small alpha, e.g. alpha=0.3)
+
+    exp_id = 12
+    output_path = os.path.join(args.output_path, 'exp-{:02d}'.format(exp_id))
+    os.makedirs(output_path, exist_ok=True)
+    print('output path for exp {}: {}'.format(exp_id, output_path))
+
+    recording_id = 'MARCHE_AssessmentTacticalEnvironment'
+    voice = 'lada'
+    stress = 'dictionary'
+    wav_folder = '{}-{}'.format(voice, stress)
+    ref_path = os.path.join(home_path, 'code', 'repo', 'ukr-tts', 'outputs', 'sofw', 'espnet',
+        recording_id, wav_folder)
+    ref_wavpaths = sorted(glob.glob(os.path.join(ref_path, '*.wav')))
+    keywords = ['.16000', '_paired', '_unpaired']
+    ref_wavpaths = filter_path(ref_wavpaths, keywords)
+    ref_wavpaths = ref_wavpaths[:5]
+
+    texts = ["Hey guys, my name is Sam, and welcome to Prep Medic.",
+             "This week's video, we are talking about the March algorithm.",
+             "All right, guys, so the March algorithm is the assessment mode that we use in a tactical environment.",
+             "A lot of other environments are starting to adapt it like civilian EMS, and essentially, it's a way of addressing life threats on our patients.",
+             "So when we come up to a patient in a non-permissive environment such as a tactical situation, our number one priority is always going to be neutralizing the threat."]
+
+    reference_dicts = {str(i+1): (ref_wavpaths[i], texts[i]) for i in range(5)}
+    nsamples = len(reference_dicts)
+
+    for i, v in enumerate(reference_dicts.values()):
+        ref_path, text = v
+        ref_id = os.path.splitext(os.path.basename(ref_path))[0]
+        reference_filename = 'reference-{}-{}.wav'.format(i, ref_id)
+        reference_filepath = os.path.join(output_path, reference_filename)
+        ref_wav, sr = librosa.load(ref_path)
+        if sr == 24000:
+            copyfile(ref_path, reference_filepath)
+            print('copied reference file: {} -> {}'.format(ref_path, reference_filepath))
+        else:
+            ref_wav2 = get_audio(ref_path, meter, sample_rate=24000)
+            sf.write(reference_filepath, ref_wav2, 24000)
+            print('resampled reference file: {} ({}) -> {} (24000)'.format(ref_path, sr, reference_filepath))
+
+    rtfs = [0 for _ in range(nsamples)]
+    diffusion_steps = 10
+    embedding_scale = 1
+    alpha = 0.0
+    beta = 0.0
+    for i, (emo, v) in enumerate(reference_dicts.items()):
+        ref_path, text = v
+
+        ref_path = os.path.join(os.getcwd(), ref_path)
+        ref_s = compute_style(model, ref_path, device=device)
+
+        ref_wav, _ = librosa.load(ref_path, sr=24000)
+        duration_ref = len(ref_wav) / 24000
+
+        wav, rtf, (duration_proc, duration_out) = run_infer(text, ref_s, diffusion_steps, embedding_scale, alpha=alpha, beta=beta)
+        print('speaker emotion maintenance, unseen speakers, diffusion steps: {}, embedding scale: {}, alpha: {}, beta: {}'.format(
+            diffusion_steps, embedding_scale, alpha, beta))
+        print("RTF: {:.4f} ({:.4f} / {:.4f})".format(rtf, duration_proc, duration_out))
+
+        ref_id = os.path.splitext(os.path.basename(ref_path))[0]
+        output_filename = '{}-{}-{}-{}-{}-{}-{}.wav'.format(emo.lower(), i, ref_id, diffusion_steps, embedding_scale, alpha, beta)
+        output_filepath = os.path.join(output_path, output_filename)
+        sf.write(output_filepath, wav, 24000)
+        print('wrote output file: {}'.format(output_filepath))
+
+        ref_wav2 = get_audio(ref_path, meter)
+        wav2 = get_audio(output_filepath, meter)
+        ref_spkr_embedding = extract_spkr_embedding(ref_wav2, 24000)
+        syn_spkr_embedding = extract_spkr_embedding(wav2, 24000)
+        sss = cos_sim(ref_spkr_embedding, syn_spkr_embedding)
+        print('sss: {:.3f}'.format(sss))
+
+        meta = {'syn-wav': output_filepath, 'text': text, 'ref-wav': ref_path, 'dur-ref': duration_ref,
+                'dur-proc': duration_proc, 'dur-syn': duration_out, 'rtf': rtf, 'diffusion-steps': diffusion_steps,
+                'embedding-scale': embedding_scale, 'alpha': alpha, 'beta': beta, 'seen-speaker': False,
+                'emo': emo, 'sss': float(sss), 'hostname': hostname, 'gpu': gpu_info, 'exp-id': exp_id, 'topic': 'speaker emotion maintenance'}
+        output_jsonfile = os.path.join(output_path, output_filename.replace('.wav', '.json'))
+        with open(output_jsonfile, 'w') as fp:
+            json.dump(meta, fp, indent=2)
+
+        rtfs[i] = rtf
+
+    rtf_avg = np.mean(rtfs)
+    print('average RTF (adaptation, unseen speakers, diffusion_steps: {}, embedding_scale: {}): {:.4f}'.format(
         diffusion_steps, embedding_scale, rtf_avg))
                 

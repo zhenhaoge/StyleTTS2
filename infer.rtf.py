@@ -50,11 +50,10 @@ def inference(text, ref_s, alpha = 0.3, beta = 0.7, diffusion_steps=5, embedding
         d_en = model.bert_encoder(bert_dur).transpose(-1, -2) 
 
         s_pred = sampler(noise = torch.randn((1, 256)).unsqueeze(1).to(device), 
-                                          embedding=bert_dur,
-                                          embedding_scale=embedding_scale,
-                                            features=ref_s, # reference from the same speaker as the embedding
-                                             num_steps=diffusion_steps).squeeze(1)
-
+            embedding=bert_dur,
+            embedding_scale=embedding_scale,
+            features=ref_s, # reference from the same speaker as the embedding
+            num_steps=diffusion_steps).squeeze(1)
 
         s = s_pred[:, 128:]
         ref = s_pred[:, :128]
@@ -69,7 +68,6 @@ def inference(text, ref_s, alpha = 0.3, beta = 0.7, diffusion_steps=5, embedding
 
         duration = torch.sigmoid(duration).sum(axis=-1)
         pred_dur = torch.round(duration.squeeze()).clamp(min=1)
-
 
         pred_aln_trg = torch.zeros(input_lengths, int(pred_dur.sum().data))
         c_frame = 0
@@ -94,10 +92,8 @@ def inference(text, ref_s, alpha = 0.3, beta = 0.7, diffusion_steps=5, embedding
             asr_new[:, :, 1:] = asr[:, :, 0:-1]
             asr = asr_new
 
-        out = model.decoder(asr, 
-                                F0_pred, N_pred, ref.squeeze().unsqueeze(0))
+        out = model.decoder(asr, F0_pred, N_pred, ref.squeeze().unsqueeze(0))
     
-        
     return out.squeeze().cpu().numpy()[..., :-50] # weird pulse at the end of the model, need to be fixed later 
 
 def run_infer(text, ref_s, diffusion_steps, embedding_scale, alpha=0.3, beta=0.7):
@@ -138,12 +134,12 @@ if __name__ == '__main__':
     # work_path = os.getcwd() # e.g., '/home/users/zge/code/repo/style-tts2'
     # args.model_path = os.path.join(work_path, 'Models', 'LibriTTS')
     # args.model_name = 'epochs_2nd_00020.pth'
-    # args.output_path = os.path.join(work_path, 'Outputs', 'RTF')
     # args.run_id = 'exp1'
-    # args.manifest_file = os.path.join(args.output_path, 'manifest.txt')
-    # args.device = 'cuda:1'
-    # args.diffusion_steps = 5
-    # args.embedding_scale = 1
+    # args.output_path = os.path.join(work_path, 'Outputs', 'RTF', args.run_id)
+    # args.manifest_file = os.path.join(work_path, 'Outputs', 'RTF', 'manifests', 'manifest_short.txt')
+    # args.device = 'cuda:0'
+    # args.diffusion_steps = 10
+    # args.embedding_scale = 2
     # args.alpha = 0.3
     # args.beta = 0.7
     # args.num_reps = 10
@@ -173,11 +169,26 @@ if __name__ == '__main__':
         if len(parts) == 1:
             device_id = 0
         else:
-            device_id = int(parts[1])    
+            device_id = int(parts[1])
         gpu_info = utils.get_gpu_info(device_id)
     else:
         gpu_info = ''
     print(gpu_info)
+
+    # check CPU restriction
+    if 'OMP_NUM_THREADS' in os.environ.keys() and os.environ['OMP_NUM_THREADS'] == '1':
+        single_CPU = True
+        if device == 'cpu':
+            resource_message = 'use CPU only and restricting to single CPU'
+        else:
+            resource_message = 'use GPU and CPU but restrciting to single CPU'
+    else:
+        single_CPU = False
+        if device == 'cpu':
+            resource_message = 'use CPU only but allowing mulpule CPUs'
+        else:
+            resource_message = 'use GPU and CMU, and allowing multiple CPUs'
+    print(resource_message)
 
     # load phonemizer
     global_phonemizer = phonemizer.backend.EspeakBackend(
@@ -241,29 +252,42 @@ if __name__ == '__main__':
 
     # run inference
     rtfs_avg = [0 for _ in range(args.num_reps)]
+    rtfs_min = [0 for _ in range(args.num_reps)]
+    rtfs_max = [0 for _ in range(args.num_reps)]
+    rtfs_a_avg = [0 for _ in range(args.num_reps)]
+    rtfs_a_min = [0 for _ in range(args.num_reps)]
+    rtfs_a_max = [0 for _ in range(args.num_reps)]
     for n in range(args.num_reps):
         rtfs = [0 for _ in range(num_samples)]
-        for i, v in enumerate(reference_dicts.values()):
+        rtfs_a = [0 for _ in range(num_samples)]
+        pairs = list(reference_dicts.values())
+        for i in range(num_samples):
 
-            ref_path, text = v
+            ref_path, text = pairs[i]
+            start = time.time()
             ref_s = compute_style(model, ref_path, device=device)
+            end = time.time()
+            duration_proc0 = end - start
 
             ref_wav, _ = librosa.load(ref_path, sr=24000)
             duration_ref = len(ref_wav) / 24000
 
             wav, rtf, (duration_proc, duration_out) = run_infer(text, ref_s,
                 args.diffusion_steps, args.embedding_scale, args.alpha, args.beta)
-            print("Run {}/{}, Sample {}/{}, RTF: {:.4f} ({:.4f} / {:.4f})".format(
-                n+1, args.num_reps, i+1, num_samples, rtf, duration_proc, duration_out))
+            duration_proc_a = duration_proc0 + duration_proc
+            rtf_a = duration_proc_a / duration_out
+            print("Run {}/{}, Sample {}/{}, RTF: {:.4f} ({:.4f} / {:.4f}), RTF-A: {:.4f} ({:.4f} / {:.4f})".format(
+                n+1, args.num_reps, i+1, num_samples, rtf, duration_proc, duration_out, rtf_a, duration_proc_a, duration_out))
 
-            output_name = '{}-{}-{}-{}-{}-{}-{}.wav'.format(args.run_id, n, i, 
+            output_name = '{}-{}-{}-{}-{}-{}.wav'.format(n, i,
                 args.diffusion_steps, args.embedding_scale, args.alpha, args.beta)
             output_file = os.path.join(args.output_path, output_name)
             sf.write(output_file, wav, 24000)
             print('wrote output file: {}'.format(output_file))
 
             meta = {'syn-wav': output_file, 'text': text, 'ref-wav': ref_path, 'dur-ref': duration_ref,
-                'dur-proc': duration_proc, 'dur-syn': duration_out, 'rtf': rtf, 'diffusion-steps': args.diffusion_steps,
+                'dur-proc0': duration_proc0, 'dur-proc': duration_proc, 'dur-proc-a': duration_proc_a,
+                'dur-syn': duration_out, 'rtf': rtf, 'rtf-a': rtf_a, 'diffusion-steps': args.diffusion_steps,
                 'embedding-scale': args.embedding_scale, 'alpha': args.alpha, 'beta': args.beta,
                 'hostname': hostname, 'gpu': gpu_info, 'run-id': args.run_id}
             output_jsonfile = os.path.join(args.output_path, output_name.replace('.wav', '.json'))
@@ -271,29 +295,65 @@ if __name__ == '__main__':
                 json.dump(meta, fp, indent=2)
 
             rtfs[i] = rtf
+            rtfs_a[i] = rtf_a
 
-        rtfs_avg[n] = np.mean(rtfs)
+        if args.num_warmup*2 > num_samples:
+            # num_sample is too small, so warmup excluding in the outter loop
+            rtfs_avg[n] = np.mean(rtfs)
+            rtfs_min[n] = np.min(rtfs)
+            rtfs_max[n] = np.max(rtfs)
+            rtfs_a_avg[n] = np.mean(rtfs_a)
+            rtfs_a_min[n] = np.min(rtfs_a)
+            rtfs_a_max[n] = np.max(rtfs_a)
+        else:
+            rtfs_avg[n] = np.mean(rtfs[args.num_warmup:])
+            rtfs_min[n] = np.min(rtfs[args.num_warmup:])
+            rtfs_max[n] = np.max(rtfs[args.num_warmup:])
+            rtfs_a_avg[n] = np.mean(rtfs_a[args.num_warmup:])
+            rtfs_a_min[n] = np.min(rtfs_a[args.num_warmup:])
+            rtfs_a_max[n] = np.max(rtfs_a[args.num_warmup:])
 
-    rtf_avg = np.mean(rtfs_avg[args.num_warmup:])
-    print('average RTF: {:.3f}'.format(rtf_avg))
+    if args.num_warmup*2 > num_samples:
+        # num_sample is too small, so warmup excluding in the outter loop
+        rtf_avg = np.mean(rtfs_avg[args.num_warmup:])
+        rtf_min = np.mean(rtfs_avg[args.num_warmup:])
+        rtf_max = np.mean(rtfs_avg[args.num_warmup:])
+        rtf_a_avg = np.mean(rtfs_a_avg[args.num_warmup:])
+        rtf_a_min = np.mean(rtfs_a_avg[args.num_warmup:])
+        rtf_a_max = np.mean(rtfs_a_avg[args.num_warmup:])
+    else:
+        # num_sample is at least twice of num_warmup, so warmup excluding in the inner loop
+        rtf_avg = np.mean(rtfs_avg)
+        rtf_min = np.min(rtfs_min)
+        rtf_max = np.max(rtfs_max)
+        rtf_a_avg = np.mean(rtfs_a_avg)
+        rtf_a_min = np.min(rtfs_a_min)
+        rtf_a_max = np.max(rtfs_a_max)
+    print('average RTF (min ~ max): {:.3f} ({:.3f} ~ {:.3f}), RTF-A (min ~ max): {:.3f} ({:.3f} ~ {:.3f})'.format(
+        rtf_avg, rtf_min, rtf_max, rtf_a_avg, rtf_a_min, rtf_a_max))
 
     # write the log file
     logfile = os.path.join(args.output_path, '{}.log'.format(args.run_id))
     with open(logfile, 'w') as f:
         f.write('model path: {}\n'.format(args.model_path))
         f.write('manifest file: {}\n'.format(args.manifest_file))
+        f.write('output path: {}\n'.format(args.output_path))
+        f.write('hostname: {}\n'.format(hostname))
+        f.write('device: {}\n'.format(device))
+        f.write('GPU info: {}\n'.format(gpu_info))
+        f.write('single CPU: {}\n'.format(single_CPU))
+        f.write('resource: {}\n'.format(resource_message))
+        f.write('number of samples: {}\n'.format(num_samples))
         f.write('number of runs: {}\n'.format(args.num_reps))
         f.write('number of warmup: {}\n'.format(args.num_warmup))
         f.write('diffusion steps: {}\n'.format(args.diffusion_steps))
         f.write('embedding_scale: {}\n'.format(args.embedding_scale))
         f.write('alpha: {}\n'.format(args.alpha))
         f.write('beta: {}\n'.format(args.beta))
-        f.write('hostname: {}\n'.format(hostname))
-        f.write('{}\n'.format(gpu_info))
         f.write('\n')
         for i in range(args.num_reps):
-            f.write('  run {}/{}: RTF {:.3f}\n'.format(i+1, args.num_reps, rtfs_avg[i]))
+            f.write('  run {}/{}: RTF {:.3f}, RTF-A {:.3f}\n'.format(i+1, args.num_reps, rtfs_avg[i], rtfs_a_avg[i]))
         f.write('\n')
-        f.write('Overall RTF: {:.3f}\n'.format(rtf_avg))
+        f.write('Overall RTF (min ~ max): {:.3f} ({:.3f} ~ {:.3f}), RTF-A (min ~ max): {:.3f} ({:.3f} ~ {:.3f})\n'.format(
+            rtf_avg, rtf_min, rtf_max, rtf_a_avg, rtf_a_min, rtf_a_max))
     print('wrote log to: {}'.format(logfile))    
-

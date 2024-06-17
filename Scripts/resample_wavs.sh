@@ -1,6 +1,7 @@
 #!/bin/bash
 #
 # resample audio samples
+# no longer needed, the audio files will be resampled to 24000 on-the-fly
 #
 # Zhenhao Ge, 2024-05-29
 
