@@ -1,4 +1,5 @@
 # prepare data for LJSpeech
+# either train_list.txt, or val_list.txt, one at a time
 # 
 # it takes the splits used in StyleTTS2 as a reference, to ensure it generate the same file
 # so it just a walk-through to generate the same data files as the LJSpeech data used in StyleTTS2,
@@ -42,22 +43,34 @@ from Text.cleaners import expand_abbreviations, expand_numbers
 # importlib.reload(Text.cleaners.english_cleaners)
 
 def get_manifest(fids, fid2text, spkr_id):
-    """fid in fids is rel file path, while fid in fid2text is the unique id, 
-       which may not be the rel path"""
+    """get the manifest file (check fid in fids and fid2text to ensure they are match
+       either real fid, or rel path"""
 
     num_fids = len(fids)
     tuple_list = [() for _ in range(num_fids)]
     for i in range(num_fids):
 
         fid = fids[i]
-        fid0 = os.path.splitext(os.path.basename(fid))[0]
-        text = fid2text[fid0]
+
+        # # use real fid to get the text in fid2text
+        # fid0 = os.path.splitext(os.path.basename(fid))[0]
+        # text = fid2text[fid0]
+
+        # use rel path as fid
+        text = fid2text[fid]
+
+        # get the raw IPA phone seqs
         ps = global_phonemizer.phonemize([text])[0]
+
+        # split the raw IPA phones to words
         ps1 = word_tokenize(ps)
+
+        # join with space
+        # (compared with ps, the punctuations are now separated from the adjacent word)
         ps2 = ' '.join(ps1)
 
         # # convert phone seqs to tokens
-        # tokens = textclenaer(ps2)
+        # tokens = textcleaner(ps2)
 
         # # insert value at index to tokens
         # index = 0
@@ -70,6 +83,7 @@ def get_manifest(fids, fid2text, spkr_id):
     return tuple_list
 
 def compare_ps(ps0_list, ps1_list):
+    """compare paired phones in the two lists and count the difference"""
 
     # get the length of ps list
     L0, L1 = len(ps0_list), len(ps1_list)
@@ -88,16 +102,22 @@ def compare_ps(ps0_list, ps1_list):
     return diff_dct
 
 def append_dct(diff_acc_dct, diff_dct):
+    """append the current difference dict to a accumulative difference dict"""
     for k in diff_dct.keys():
         if k in diff_acc_dct.keys():
-            diff_acc_dct[k] = diff_acc_dct[k] + diff_dct[k]
+            diff_acc_dct[k] += diff_dct[k]
         else:
             diff_acc_dct[k] = diff_dct[k]
     return diff_acc_dct
 
 def get_aligned_ps(ps0, ps1, ph='0'):
+    """get aligned phone seqs using the NeedlemanWunsch (NW) algorithm"""
+
+    # get letter-wise list
     ps0_list = [*ps0]
     ps1_list = [*ps1]
+
+    # get aligned ps0 and ps1 (replace - with ph, remove divider simbol |)
     ps0_aligned, ps1_aligned = nw.get_alignment(ps0_list, ps1_list, return_score_matrix=False)
     ps0_aligned = ps0_aligned.replace('-', ph).replace(' | ', '').strip()
     ps1_aligned = ps1_aligned.replace('-', ph).replace(' | ', '').strip()
@@ -130,6 +150,8 @@ def get_aligned_ps(ps0, ps1, ph='0'):
 #     return ps_list
 
 def get_grouped_lists(ps0, ps1, ph='0'):
+    """get two grouped phone lists with paired phones, most phone has length 1,
+       some phone have length 2 if they are appended with ':' or placehold phone"""
 
     # get ps0 and ps1 without space
     ps0_nospace = ps0.replace(' ', '')
@@ -205,36 +227,40 @@ if __name__ == '__main__':
     num_wavfiles = len(wavfiles)
     print('# of wav files in {}: {}'.format(args.data_path, num_wavfiles))
 
-    # get fid2wav dict
+    # get fid2wav dict (fid is rel path)
     fid2wav = get_fid2wav(wavfiles, args.data_path)
 
-    # get wav ids from the reference id file path
+    # get fids from the reference id file path (train: 12500, val: 100, remain: 500)
     fids = get_fid(args.id_filepath)
     num_fids = len(fids)
     print('# of fids in {}: {}'.format(args.id_filepath, num_fids))
 
     # get fid2text dict from meta file
-    fid2text = get_fid2text(args.meta_filepath)
+    fid2text1 = get_fid2text(args.meta_filepath)
+
+    # change fid to rel path to match fid2wav dict
+    fid2text2 = {'{}.wav'.format(fid): text for fid, text in fid2text1.items()}
 
     # clean texts in fid2text
-    fid2text2 = {fid: clean_text(text, flag_ascii=False, flag_lowercase=False) for fid, text in fid2text.items()}
+    # cleaning includes removing or replace special letters, convert ascii, lowercase, etc.
+    fid2text3 = {fid: clean_text(text, flag_ascii=False, flag_lowercase=False) for fid, text in fid2text2.items()}
 
-    # fid2text2 = {}
-    # for i, (fid, text) in enumerate(fid2text.items()):
-    #     text2 = clean_text(text, flag_ascii=False, flag_lowercase=False)
-    #     fid2text2[fid] = text2
+    fid2text = fid2text3
 
     # get the manifest tuple list
-    tuple_list = get_manifest(fids, fid2text2, spkr_id=0)
+    tuple_list = get_manifest(fids, fid2text, spkr_id=0)
      
     # write output manifest file
     tuple2csv(tuple_list, args.out_filepath, delimiter='|')
 
-    # compare with the author's ipa phone sequence (optional)
+    # (optional) compare with the author's ipa phone sequence
+
+    # get fid2ps dict from my manifest file (4 columns)
     manifest_filepath0 = args.out_filepath
     print('getting fid2ps from {} ...'.format(manifest_filepath0))
     fid2ps0 = get_fid2ps(manifest_filepath0, idx_fid=0, idx_ps=2, delimiter='|')
 
+    # get fid2ps dict from author's manifest file (3 columns)
     manifest_filepath1 = args.id_filepath
     print('getting fid2ps from {} ...'.format(manifest_filepath1))
     fid2ps1 = get_fid2ps(manifest_filepath1, idx_fid=0, idx_ps=1, delimiter='|')
@@ -248,16 +274,21 @@ if __name__ == '__main__':
         skip_list = []
 
     # get the count of diff pairs
-    diff_acc_dct = {}
-    ph = '0'    
-    Ls = []
+    diff_acc_dct = {} # difference accumulative dict
+    ph = '0' # placehold phone
+    Ls = [] # list of #phones per sentence
     for i in range(num_fids):
 
         fid = fids[i]
         # print('processing {}/{}: {}'.format(i, num_fids, fid))
 
-        fid0 = os.path.splitext(os.path.basename(fid))[0]
-        text_ori = fid2text[fid0]
+        # # use real fid to get the text in fid2text1
+        # fid0 = os.path.splitext(os.path.basename(fid))[0]
+        # text_ori = fid2text1[fid0]
+
+        # use rel path as fid to get the text in fid2text
+        text_ori = fid2text2[fid]
+
         text_exp0 = expand_abbreviations(text_ori)
         text_exp1 = expand_numbers(text_exp0)
 
@@ -271,16 +302,18 @@ if __name__ == '__main__':
         ps0 = fid2ps0[fid]
         ps1 = fid2ps1[fid]
 
+        # get aligned phone seqs
         ps0_aligned, ps1_aligned = get_aligned_ps(ps0, ps1, ph=ph)
         # ps0_list = get_grouped_list(ps0_aligned, ph=ph)
         # ps1_list = get_grouped_list(ps1_aligned, ph=ph)
+
         ps0_list, ps1_list, L = get_grouped_lists(ps0_aligned, ps1_aligned, ph=ph)
         Ls.append(L)
 
         diff_dct = compare_ps(ps0_list, ps1_list)
         diff_acc_dct = append_dct(diff_acc_dct, diff_dct)
 
-    # get percentage of different phones (val: 1.13%, train: 1.17)
+    # get percentage of different phones (val: 1.13%, train: 1.17%)
     num_diff_phones = sum(diff_acc_dct.values())
     num_all_phones = sum(Ls)
     percent_diff = num_diff_phones / num_all_phones

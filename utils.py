@@ -76,12 +76,14 @@ def log_print(message, logger):
     logger.info(message)
     print(message)
 
-def set_path(path):
+def set_path(path, verbose=False):
     if os.path.isdir(path):
-        print('use existed path: {}'.format(path))
+        if verbose:
+            print('use existed path: {}'.format(path))
     else:
         os.makedirs(path)
-        print('created path: {}'.format(path))
+        if verbose:
+            print('created path: {}'.format(path))
 
 def get_hostname():
     hostname = subprocess.check_output('hostname').decode('ascii').rstrip()
@@ -129,6 +131,8 @@ def get_fid2wav(wavfiles, data_path):
     return fid2wav
 
 def get_fid2text(meta_filepath):
+    """get fid2text dict, this fid is real fid without filename extension,
+       since the fid in the first column of the meta csv file does not contain extension"""
     lines =  open(meta_filepath, 'r').readlines()
     fid2text = {}
     for line in lines:

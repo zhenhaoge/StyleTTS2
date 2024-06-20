@@ -42,7 +42,7 @@ logger = get_logger(__name__, log_level="DEBUG")
 @click.option('-p', '--config_path', default='Configs/config.yml', type=str)
 def main(config_path):
 
-    # config_path = 'Configs/config_ljspeech_first.yml'
+    # config_path = 'Configs/config_gigaspeech_first.yml'
     config = yaml.safe_load(open(config_path))
 
     log_dir = config['log_dir']
@@ -78,6 +78,10 @@ def main(config_path):
     
     # load data
     train_list, val_list = get_data_path_list(train_path, val_path)
+    # with open(train_path, 'r', encoding='utf-8', errors='ignore') as f:
+    #     train_list = f.readlines()
+    # with open(val_path, 'r', encoding='utf-8', errors='ignore') as f:
+    #     val_list = f.readlines()
 
     # # example (using the original argument names for debugging)
     # path_list = val_list

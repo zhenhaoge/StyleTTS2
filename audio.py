@@ -282,4 +282,12 @@ def change_speed_only(sound, tempo_ratio):
 
 #     return input_wav, output_wav, sr    
 
+def convert_opus2wav(opus_file, wav_file, target_sr=16000, rm_opus=False):
+    cmd = f'ffmpeg -y -i {opus_file} -ac 1 -ar {target_sr} {wav_file}'
+    try:
+      os.system(cmd)
+    except:
+      sys.exit(f'Failed to run the cmd: {cmd}')
+    if rm_opus is True:
+      os.remove(opus_file)
 

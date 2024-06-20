@@ -45,9 +45,18 @@ _abbreviations = [(re.compile('\\b%s\\.' % x[0], re.IGNORECASE), x[1]) for x in 
     ('ft', 'fort'),
 ]]
 
+_replacements = [(re.compile('\\b%s' % x[0], re.IGNORECASE), x[1]) for x in [
+    ('the zeroth', '.'),
+]]
 
 def expand_abbreviations(text):
     for regex, replacement in _abbreviations:
+        text = re.sub(regex, replacement, text)
+    return text
+
+
+def replace_words(text):
+    for regex, replacement in _replacements:
         text = re.sub(regex, replacement, text)
     return text
 
@@ -115,9 +124,10 @@ def replace_roman_numeral(text):
     return text2               
 
 
-def english_cleaners(text, flag_lowercase=True, flag_ascii=True):
+def english_cleaners(text, replace_word=False, flag_lowercase=True, flag_ascii=True):
     '''Pipeline for English text, including number and abbreviation expansion.'''
     if flag_ascii: text = convert_to_ascii(text)
+    if replace_word: text = replace_words(text)
     text = replace_roman_numeral(text)
     text = expand_numbers(text)
     text = expand_abbreviations(text)
