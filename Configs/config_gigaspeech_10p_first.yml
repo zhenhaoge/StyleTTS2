@@ -1,11 +1,11 @@
 log_dir: "Models/GigaSpeech"
 first_stage_path: "first_stage.pth" # used in the second stage
-save_freq: 1
+save_freq: 2
 log_interval: 10
 device: "cuda"
 epochs_1st: 200 # number of epochs for first stage training (pre-training)
 epochs_2nd: 100 # number of epochs for second stage training (joint training)
-batch_size: 4 # caution: batch size 1 per gpu may cause dimension error
+batch_size: 16 # caution: batch size 1 per gpu may cause dimension error
 max_len: 200 # maximum number of frames
 # load pretrained model trained previously in the current stage
 # pretrained_model: "Models/LJSpeech/stage-1/epoch_1st_00192.pth"
@@ -19,7 +19,7 @@ ASR_path: "Utils/ASR/epoch_00080.pth"
 PLBERT_dir: 'Utils/PLBERT/'
 
 data_params:
-  train_data: "Data/GigaSpeech/train_list.txt"
+  train_data: "Data/GigaSpeech/train_list_10p_1234.txt"
   val_data: "Data/GigaSpeech/val_list.txt"
   root_path: "Datasets/GigaSpeech-Zhenhao"
   OOD_data: "Data/OOD_texts.txt"

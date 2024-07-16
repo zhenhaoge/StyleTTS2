@@ -42,14 +42,14 @@ logger = get_logger(__name__, log_level="DEBUG")
 @click.option('-p', '--config_path', default='Configs/config.yml', type=str)
 def main(config_path):
 
-    # config_path = 'Configs/config_gigaspeech_first.yml'
+    # config_path = 'Configs/config_gigaspeech_10p_first.yml'
     config = yaml.safe_load(open(config_path))
 
     log_dir = config['log_dir']
     if not osp.exists(log_dir): os.makedirs(log_dir, exist_ok=True)
     shutil.copy(config_path, osp.join(log_dir, osp.basename(config_path)))
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-    accelerator = Accelerator(project_dir=log_dir, split_batches=True, kwargs_handlers=[ddp_kwargs])    
+    accelerator = Accelerator(project_dir=log_dir, split_batches=True, kwargs_handlers=[ddp_kwargs])
     if accelerator.is_main_process:
         writer = SummaryWriter(log_dir + "/tensorboard")
 
@@ -88,9 +88,7 @@ def main(config_path):
     # validation = True
     # OOD_data = "Data/OOD_texts.txt"
     # collate_config = {}
-    # val_dataloader = build_dataloader(path_list,
-    #                                 root_path,
-    #                                 sr,
+    # val_dataloader = build_dataloader(path_list, root_path, sr,
     #                                 validation=validation,
     #                                 OOD_data=OOD_data,
     #                                 min_length=min_length,
@@ -101,9 +99,7 @@ def main(config_path):
     #                                 collection_config={},
     #                                 dataset_config={})
 
-    train_dataloader = build_dataloader(train_list,
-                                        root_path,
-                                        sr,
+    train_dataloader = build_dataloader(train_list, root_path, sr,
                                         OOD_data=OOD_data,
                                         min_length=min_length,
                                         batch_size=batch_size,
@@ -112,9 +108,7 @@ def main(config_path):
                                         dataset_config={},
                                         device=device)
 
-    val_dataloader = build_dataloader(val_list,
-                                      root_path,
-                                      sr,
+    val_dataloader = build_dataloader(val_list, root_path, sr,
                                       OOD_data=OOD_data,
                                       min_length=min_length,
                                       batch_size=batch_size,

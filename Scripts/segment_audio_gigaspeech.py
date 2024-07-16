@@ -50,6 +50,9 @@ def extract_meta(args):
             json.dump(audio_dict, f, indent=2)
         if verbose:    
             print(f'wrote meta file: {meta_file}')
+    else:
+        if verbose:
+            print(f'meta file: {meta_file} already exist')
 
 def get_texts(meta_file):
     with open(meta_file) as f:
@@ -163,7 +166,7 @@ output_path = os.path.join(data_path, 'segment')
 set_path(meta_path, verbose=True)
 set_path(output_path, verbose=True)
 
-verbose = False
+verbose = True
 
 # get master metadata jsonfile
 master_jsonfile = os.path.join(data_ori_path, 'GigaSpeech.json')

@@ -33,6 +33,7 @@ def compute_style_from_dicts(model, ref_dicts, device='cuda'):
     return reference_embeddings
 
 def compute_style_from_path(model, path, device='cuda'):
+
     wave, sr = librosa.load(path, sr=24000)
     audio, index = librosa.effects.trim(wave, top_db=30)
     if sr != 24000:
@@ -40,7 +41,40 @@ def compute_style_from_path(model, path, device='cuda'):
     mel_tensor = preprocess(audio).to(device)
 
     with torch.no_grad():
-        ref_s = model.style_encoder(mel_tensor.unsqueeze(1))
-        ref_p = model.predictor_encoder(mel_tensor.unsqueeze(1))
+        ref_s = model.style_encoder(mel_tensor.unsqueeze(1)) # 1X128
+        ref_p = model.predictor_encoder(mel_tensor.unsqueeze(1)) # 1X128
 
-    return torch.cat([ref_s, ref_p], dim=1)
+    ref_sp = torch.cat([ref_s, ref_p], dim=1) # 1X256
+
+    return ref_sp
+
+def compute_style_from_two_paths(model, style_path, predictor_path, device='cuda'):
+
+    wave_s, sr_s = librosa.load(style_path, sr=24000)
+    audio_s, index_s = librosa.effects.trim(wave_s, top_db=30)
+    mel_tensor_s = preprocess(audio_s).to(device)
+
+    wave_p, sr_p = librosa.load(style_path, sr=24000)
+    audio_p, index_p = librosa.effects.trim(wave_p, top_db=30)
+    mel_tensor_p = preprocess(audio_p).to(device)
+
+    with torch.no_grad():
+        ref_s = model.style_encoder(mel_tensor_s.unsqueeze(1)) # 1X128
+        ref_p = model.predictor_encoder(mel_tensor_p.unsqueeze(1)) # 1X128
+
+    ref_sp = torch.cat([ref_s, ref_p], dim=1) # 1X256
+
+    return ref_sp
+
+def compute_style_from_two_wavs(model, audio_s, audio_p, device='cuda'):
+
+    mel_tensor_s = preprocess(audio_s).to(device)
+    mel_tensor_p = preprocess(audio_p).to(device)
+
+    with torch.no_grad():
+        ref_s = model.style_encoder(mel_tensor_s.unsqueeze(1)) # 1X128
+        ref_p = model.predictor_encoder(mel_tensor_p.unsqueeze(1)) # 1X128
+
+    ref_sp = torch.cat([ref_s, ref_p], dim=1) # 1X256
+
+    return ref_sp

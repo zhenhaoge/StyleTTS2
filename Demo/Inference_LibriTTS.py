@@ -83,7 +83,7 @@ def extract_spkr_embedding(wav, sample_rate):
 
 def cos_sim(A,B):
     cosine = np.dot(A,B)/(norm(A)*norm(B))
-    return cosine    
+    return cosine
 
 def inference(text, ref_s, alpha = 0.3, beta = 0.7, diffusion_steps=5, embedding_scale=1):
     text = text.strip()
@@ -1546,4 +1546,4 @@ if __name__ == '__main__':
     rtf_avg = np.mean(rtfs)
     print('average RTF (adaptation, unseen speakers, diffusion_steps: {}, embedding_scale: {}): {:.4f}'.format(
         diffusion_steps, embedding_scale, rtf_avg))
-                
+                   

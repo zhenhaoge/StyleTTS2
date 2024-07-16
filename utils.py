@@ -14,6 +14,7 @@ from munch import Munch
 import subprocess
 import re
 import csv
+import json
 
 def maximum_path(neg_cent, mask):
   """ Cython optimized version.
@@ -85,6 +86,17 @@ def set_path(path, verbose=False):
         if verbose:
             print('created path: {}'.format(path))
 
+def empty_dir(folder):
+  for filename in os.listdir(folder):
+      file_path = os.path.join(folder, filename)
+      try:
+          if os.path.isfile(file_path) or os.path.islink(file_path):
+              os.unlink(file_path)
+          elif os.path.isdir(file_path):
+              shutil.rmtree(file_path)
+      except Exception as e:
+          print('Failed to delete %s. Reason: %s' % (file_path, e))
+
 def get_hostname():
     hostname = subprocess.check_output('hostname').decode('ascii').rstrip()
     return hostname
@@ -153,12 +165,19 @@ def get_fid2ps(manifest_filepath, idx_fid, idx_ps, delimiter='|'):
         fid2ps[fid] = ps
     return fid2ps
 
-def tuple2csv(tuple_list, csvname, delimiter=',', verbose=True):
+def tuple2csv(tuple_list, csvname, delimiter=',', header=[], verbose=True):
     with open(csvname, 'w', newline='') as f:
         csv_out = csv.writer(f, delimiter=delimiter)
+        if header:
+            csv_out.writerow(header)
         n = len(tuple_list)
         for i in range(n):
             csv_out.writerow(list(tuple_list[i]))
     if verbose:
         print('{} saved!'.format(csvname))
+
+def get_value_from_json(jsonfile, key):
+    with open(jsonfile) as f:
+        dct = json.load(f)
+        return dct[key]
 

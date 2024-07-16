@@ -8,7 +8,7 @@ import wave
 import pyrubberband
 import librosa
 import soundfile as sf
-# from audiostretchy.stretch import stretch_audio
+from audiostretchy.stretch import stretch_audio
 
 def audioread(audiofile, starttime=0.0, duration=float('inf'), verbose=False):
   """
@@ -242,45 +242,81 @@ def change_speed_only(sound, tempo_ratio):
 
     return new_seg
 
-# def adjust_speed(input_wavfile, output_wavfile, speed, verbose=False):
+def list_flat(l):
+  """convert 2-layer list to 1-layer (flatern list)"""
+  return  [item for sublist in l for item in sublist]
 
-#     # get ratio from speed
-#     # new audio duration / original audio duration (<1 means faster)
-#     ratio = 1 / speed 
+def extract_wav_channel(wav_in, wav_out, channel=0, verbose=False):
 
-#     output_wavfile_temp = output_wavfile.replace('.wav', '.tmp.wav')
-#     stretch_audio(input_wavfile, output_wavfile_temp, ratio)
+  if channel=='left' or channel=='l': channel=0
+  if channel=='right' or channel=='r': channel=1
 
-#     # get the input and output (temp) wavs
-#     input_wav, sr = librosa.load(input_wavfile, sr=None)
-#     output_wav_temp, sr2 = librosa.load(output_wavfile_temp, sr=None)
-#     assert sr2 == sr, 'input and output wav file have different sampling rate!'
-#     del sr2
+  with wave.open(wav_in, 'r') as f:
+    params = list(f.getparams())
+    nchannels = params[0]
+    sampwidth = params[1]
+    nframes = params[3]
+    data = f.readframes(nframes) # range: [0,2^(4*sampwidth)-1]
 
-#     # get the input and output (temp) #samples
-#     input_nsamples = len(input_wav)
-#     output_nsamples_temp = len(output_wav_temp)
+  if channel+1 > nchannels:
+    raise Exception('No channel {} since {} has {} channels!'.format(channel, \
+                    wav_in, nchannels))
 
-#     # get the output #samples (should be based on the time-scaling factor)
-#     output_nsamples = int(np.ceil(input_nsamples/speed))
+  samples = [[] for i in range(sampwidth)]
+  samples_in_channel = [[] for i in range(nchannels)]
+  for i in range(sampwidth):
+    samples[i] = data[i::sampwidth] # samples[0] <-- data[0::sampwidth]
+    samples_in_channel[i] = samples[i][channel::nchannels]
 
-#     # truncate the trailing silence if needed
-#     output_dur_temp = output_nsamples_temp / sr
-#     output_dur = output_nsamples / sr
-#     if output_nsamples_temp > output_nsamples:
-#         if verbose:
-#             print('truncating the trailing silence: {:.3f} sec. -> {:.3f} sec.'.format(
-#                 output_dur_temp, output_dur))
-#         output_wav = output_wav_temp[:output_nsamples]
-#         sf.write(output_wavfile, output_wav, sr)
-#         os.remove(output_wavfile_temp)
-#     else:
-#         if verbose:
-#             print('output tmp dur: {:.3f}, output dur: {:.3f}, no truncation needed'.format(
-#                 output_dur_temp, output_dur))
-#         shutil.move(output_wavfile_temp, output_wavfile)
+  data_in_channel = bytes(list_flat(list(map(list, zip(*samples_in_channel)))))
 
-#     return input_wav, output_wav, sr    
+  with wave.open(wav_out, 'w') as f:
+    params[0] = 1
+    params[3] = len(data_in_channel)
+    f.setparams(tuple(params))
+    f.writeframes(data_in_channel)
+    if verbose:
+      print('wrote {} (channel {}) to {}'.format(wav_in, channel, wav_out))
+
+def adjust_speed(input_wavfile, output_wavfile, speed, verbose=False):
+
+    # get ratio from speed
+    # new audio duration / original audio duration (<1 means faster)
+    ratio = 1 / speed
+
+    output_wavfile_temp = output_wavfile.replace('.wav', '.tmp.wav')
+    stretch_audio(input_wavfile, output_wavfile_temp, ratio)
+
+    # get the input and output (temp) wavs
+    input_wav, sr = librosa.load(input_wavfile, sr=None)
+    output_wav_temp, sr2 = librosa.load(output_wavfile_temp, sr=None)
+    assert sr2 == sr, 'input and output wav file have different sampling rate!'
+    del sr2
+
+    # get the input and output (temp) #samples
+    input_nsamples = len(input_wav)
+    output_nsamples_temp = len(output_wav_temp)
+
+    # get the output #samples (should be based on the time-scaling factor)
+    output_nsamples = int(np.ceil(input_nsamples/speed))
+
+    # truncate the trailing silence if needed
+    output_dur_temp = output_nsamples_temp / sr
+    output_dur = output_nsamples / sr
+    if output_nsamples_temp > output_nsamples:
+        if verbose:
+            print('truncating the trailing silence: {:.3f} sec. -> {:.3f} sec.'.format(
+                output_dur_temp, output_dur))
+        output_wav = output_wav_temp[:output_nsamples]
+        sf.write(output_wavfile, output_wav, sr)
+        os.remove(output_wavfile_temp)
+    else:
+        if verbose:
+            print('output tmp dur: {:.3f}, output dur: {:.3f}, no truncation needed'.format(
+                output_dur_temp, output_dur))
+        shutil.move(output_wavfile_temp, output_wavfile)
+
+    return input_wav, output_wav, sr    
 
 def convert_opus2wav(opus_file, wav_file, target_sr=16000, rm_opus=False):
     cmd = f'ffmpeg -y -i {opus_file} -ac 1 -ar {target_sr} {wav_file}'
