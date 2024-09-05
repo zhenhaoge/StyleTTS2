@@ -8,7 +8,7 @@ import wave
 import pyrubberband
 import librosa
 import soundfile as sf
-from audiostretchy.stretch import stretch_audio
+import array
 
 def audioread(audiofile, starttime=0.0, duration=float('inf'), verbose=False):
   """
@@ -278,46 +278,6 @@ def extract_wav_channel(wav_in, wav_out, channel=0, verbose=False):
     if verbose:
       print('wrote {} (channel {}) to {}'.format(wav_in, channel, wav_out))
 
-def adjust_speed(input_wavfile, output_wavfile, speed, verbose=False):
-
-    # get ratio from speed
-    # new audio duration / original audio duration (<1 means faster)
-    ratio = 1 / speed
-
-    output_wavfile_temp = output_wavfile.replace('.wav', '.tmp.wav')
-    stretch_audio(input_wavfile, output_wavfile_temp, ratio)
-
-    # get the input and output (temp) wavs
-    input_wav, sr = librosa.load(input_wavfile, sr=None)
-    output_wav_temp, sr2 = librosa.load(output_wavfile_temp, sr=None)
-    assert sr2 == sr, 'input and output wav file have different sampling rate!'
-    del sr2
-
-    # get the input and output (temp) #samples
-    input_nsamples = len(input_wav)
-    output_nsamples_temp = len(output_wav_temp)
-
-    # get the output #samples (should be based on the time-scaling factor)
-    output_nsamples = int(np.ceil(input_nsamples/speed))
-
-    # truncate the trailing silence if needed
-    output_dur_temp = output_nsamples_temp / sr
-    output_dur = output_nsamples / sr
-    if output_nsamples_temp > output_nsamples:
-        if verbose:
-            print('truncating the trailing silence: {:.3f} sec. -> {:.3f} sec.'.format(
-                output_dur_temp, output_dur))
-        output_wav = output_wav_temp[:output_nsamples]
-        sf.write(output_wavfile, output_wav, sr)
-        os.remove(output_wavfile_temp)
-    else:
-        if verbose:
-            print('output tmp dur: {:.3f}, output dur: {:.3f}, no truncation needed'.format(
-                output_dur_temp, output_dur))
-        shutil.move(output_wavfile_temp, output_wavfile)
-
-    return input_wav, output_wav, sr    
-
 def convert_opus2wav(opus_file, wav_file, target_sr=16000, rm_opus=False):
     cmd = f'ffmpeg -y -i {opus_file} -ac 1 -ar {target_sr} {wav_file}'
     try:
@@ -327,3 +287,30 @@ def convert_opus2wav(opus_file, wav_file, target_sr=16000, rm_opus=False):
     if rm_opus is True:
       os.remove(opus_file)
 
+def make_stereo(file1, output):
+    ifile = wave.open(file1)
+    print(ifile.getparams())
+    # (1, 2, 44100, 2013900, 'NONE', 'not compressed')
+    (nchannels, sampwidth, framerate, nframes, comptype, compname) = ifile.getparams()
+    assert comptype == 'NONE'  # Compressed not supported yet
+    array_type = {1:'B', 2: 'h', 4: 'l'}[sampwidth]
+    left_channel = array.array(array_type, ifile.readframes(nframes))[::nchannels]
+    ifile.close()
+
+    stereo = 2 * left_channel
+    stereo[0::2] = stereo[1::2] = left_channel
+
+    ofile = wave.open(output, 'w')
+    ofile.setparams((2, sampwidth, framerate, nframes, comptype, compname))
+    ofile.writeframes(stereo.tobytes())
+    ofile.close()
+
+def load_wavs(audiofiles, sr0=24000):
+    """load multiple waves from audio files and concatenate them"""
+
+    naudiofiles = len(audiofiles)
+    wave_list = ['' for _ in range(naudiofiles)]
+    for i in range(naudiofiles):
+        wave_list[i] = librosa.load(audiofiles[i], sr=sr0)[0]
+    wave = np.concatenate(wave_list)
+    return wave

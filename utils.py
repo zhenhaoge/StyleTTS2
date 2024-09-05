@@ -181,3 +181,21 @@ def get_value_from_json(jsonfile, key):
         dct = json.load(f)
         return dct[key]
 
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
+def split(a, n):
+    """split list a into n parts, if len(a) % n !=0, the first m sub-list will have one additional element"""
+    k, m = divmod(len(a), n) # len(a) == k * n + m
+    return [a[i*k+min(i, m):(i+1)*k+min(i+1, m)] for i in range(n)]
+
+def flatten(lst):
+    return [x for sub_lst in lst for x in sub_lst]
+

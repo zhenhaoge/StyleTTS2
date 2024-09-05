@@ -42,11 +42,13 @@ logger = get_logger(__name__, log_level="DEBUG")
 @click.option('-p', '--config_path', default='Configs/config.yml', type=str)
 def main(config_path):
 
-    # config_path = 'Configs/config_gigaspeech_10p_first.yml'
+    # config_path = 'Configs/config_gigaspeech_multispk_first.yml'
     config = yaml.safe_load(open(config_path))
 
     log_dir = config['log_dir']
-    if not osp.exists(log_dir): os.makedirs(log_dir, exist_ok=True)
+    if not osp.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
+        print(f'created log dir: {log_dir}')
     shutil.copy(config_path, osp.join(log_dir, osp.basename(config_path)))
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(project_dir=log_dir, split_batches=True, kwargs_handlers=[ddp_kwargs])
@@ -291,7 +293,7 @@ def main(config_path):
             if gt.shape[-1] < 80:
                 continue
                 
-            with torch.no_grad():    
+            with torch.no_grad():
                 real_norm = log_norm(gt.unsqueeze(1)).squeeze(1).detach()
                 # gt.shape: [4, 80, 172]
                 # gt.unsqueeze(1).shape: [4, 1, 80, 172]

@@ -47,6 +47,9 @@ handler = StreamHandler()
 handler.setLevel(logging.DEBUG)
 logger.addHandler(handler)
 
+# attempt to avoid OOM after diff_epoch
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 
 @click.command()
 @click.option('-p', '--config_path', default='Configs/config.yml', type=str)
@@ -245,6 +248,9 @@ def main(config_path):
 
 
     for epoch in range(start_epoch, epochs):
+
+        torch.cuda.empty_cache()
+
         running_loss = 0
         start_time = time.time()
 

@@ -1,15 +1,13 @@
-log_dir: "Models/GigaSpeech"
-first_stage_path: "first_stage.pth" # used in the second stage
-save_freq: 2
+log_dir: "Models/GigaSpeech/full_multispk"
+first_stage_path: "first_stage.pth"
+save_freq: 1
 log_interval: 10
 device: "cuda"
-epochs_1st: 200 # number of epochs for first stage training (pre-training)
-epochs_2nd: 100 # number of epochs for second stage training (joint training)
-batch_size: 16 # caution: batch size 1 per gpu may cause dimension error
+epochs_1st: 50 # number of epochs for first stage training (pre-training)
+epochs_2nd: 30 # number of peochs for second stage training (joint training)
+batch_size: 16
 max_len: 200 # maximum number of frames
-# load pretrained model trained previously in the current stage
-# pretrained_model: "Models/LJSpeech/stage-1/epoch_1st_00192.pth"
-pretrained_model: "" # load pretrained model trained previously in the current stage
+pretrained_model: ""
 second_stage_load_pretrained: true # set to true if the pre-trained model is for 2nd stage
 load_only_params: false # set to true if do not want to load epoch numbers and optimizer parameters
 
@@ -19,9 +17,9 @@ ASR_path: "Utils/ASR/epoch_00080.pth"
 PLBERT_dir: 'Utils/PLBERT/'
 
 data_params:
-  train_data: "Data/GigaSpeech/train_list_10p_1234.txt"
-  val_data: "Data/GigaSpeech/val_list.txt"
-  root_path: "Datasets/GigaSpeech-Zhenhao"
+  train_data: "Data/GigaSpeech/train_list_nodur.new.txt"
+  val_data: "Data/GigaSpeech/val_list_nodur.txt"
+  root_path:  "Datasets/GigaSpeech-Zhenhao"
   OOD_data: "Data/OOD_texts.txt"
   min_length: 50 # sample until texts with this size are obtained for OOD texts
 
@@ -33,7 +31,7 @@ preprocess_params:
     hop_length: 300
 
 model_params:
-  multispeaker: false
+  multispeaker: true
 
   dim_in: 64 
   hidden_dim: 512
@@ -49,14 +47,12 @@ model_params:
 
   # config for decoder
   decoder: 
-      type: 'istftnet' # either hifigan or istftnet
+      type: 'hifigan' # either hifigan or istftnet
       resblock_kernel_sizes: [3,7,11]
-      upsample_rates :  [10, 6]
+      upsample_rates :  [10,5,3,2]
       upsample_initial_channel: 512
       resblock_dilation_sizes: [[1,3,5], [1,3,5], [1,3,5]]
-      upsample_kernel_sizes: [20, 12]
-      gen_istft_n_fft: 20
-      gen_istft_hop_size: 5
+      upsample_kernel_sizes: [20,10,6,4]
       
   # speech language model config
   slm:
@@ -90,7 +86,7 @@ loss_params:
     
     lambda_mono: 1. # monotonic alignment loss (1st stage, TMA)
     lambda_s2s: 1. # sequence-to-sequence loss (1st stage, TMA)
-    TMA_epoch: 50 # TMA starting epoch (1st stage)
+    TMA_epoch: 5 # TMA starting epoch (1st stage)
 
     lambda_F0: 1. # F0 reconstruction loss (2nd stage)
     lambda_norm: 1. # norm reconstruction loss (2nd stage)
@@ -99,8 +95,8 @@ loss_params:
     lambda_sty: 1. # style reconstruction loss (2nd stage)
     lambda_diff: 1. # score matching loss (2nd stage)
     
-    diff_epoch: 20 # style diffusion starting epoch (2nd stage)
-    joint_epoch: 50 # joint training starting epoch (2nd stage)
+    diff_epoch: 10 # style diffusion starting epoch (2nd stage)
+    joint_epoch: 15 # joint training starting epoch (2nd stage)
 
 optimizer_params:
   lr: 0.0001 # general learning rate
@@ -111,8 +107,7 @@ slmadv_params:
   min_len: 400 # minimum length of samples
   max_len: 500 # maximum length of samples
   batch_percentage: 0.5 # to prevent out of memory, only use half of the original batch size
-  iter: 10 # update the discriminator every this iterations of generator update
+  iter: 20 # update the discriminator every this iterations of generator update
   thresh: 5 # gradient norm above which the gradient is scaled
   scale: 0.01 # gradient scaling factor for predictors from SLM discriminators
   sig: 1.5 # sigma for differentiable duration modeling
-  

@@ -51,6 +51,7 @@ textclenaer = TextCleaner()
 from infer_utils import length_to_mask
 from infer_utils import compute_style_from_path as compute_style
 
+# import dlib
 from pyannote.audio import Inference
 spkr_embedding = Inference("pyannote/embedding", window="whole")
 
@@ -146,11 +147,12 @@ def inference(text, ref_s, alpha = 0.3, beta = 0.7, diffusion_steps=5, embedding
             asr_new[:, :, 1:] = asr[:, :, 0:-1]
             asr = asr_new
 
+        # asr: [1, 512, c_frame], F0_pred: [1, 2*c_frame], N_pred: [1, 2*c_frame], ref: [1, 128]
         out = model.decoder(asr, F0_pred, N_pred, ref.squeeze().unsqueeze(0))
         out2 = out.squeeze().cpu().numpy()[..., :-50] # weird pulse at the end of the model, need to be fixed later
         # out2 = out.squeeze().cpu().detach().numpy()[..., :-50] 
 
-    return out2     
+    return out2
 
 def LFinference(text, s_prev, ref_s, alpha = 0.3, beta = 0.7, t = 0.7, diffusion_steps=5, embedding_scale=1):
     text = text.strip()
@@ -385,13 +387,13 @@ if __name__ == '__main__':
     # args = argparse.ArgumentParser()
 
     # work_path = os.getcwd() # e.g., '/home/users/zge/code/repo/style-tts2'
-    # args.config_path = os.path.join(work_path, 'Models', 'LibriTTS', 'config.yml')
-    # args.model_path = os.path.join(work_path, 'Models', 'LibriTTS', 'epochs_2nd_00020.pth')
-    # args.output_path = os.path.join(work_path, 'Outputs', 'Demo', 'LibriTTS')
+    # args.config_path = os.path.join(work_path, 'Models', 'GigaSpeech', 'config_gigaspeech_10p_second.yml')
+    # args.model_path = os.path.join(work_path, 'Models', 'GigaSpeech', 'epoch_2nd_00041.pth')
+    # args.output_path = os.path.join(work_path, 'Outputs', 'Demo', 'GigaSpeech')
     # args.device = 'cuda:0' # 'cuda', 'cuda:x', or 'cpu'
 
     # set and create output dir (if needed)
-    set_path(args.output_path)
+    set_path(args.output_path, verbose=True)
 
     # set GPU/CPU device
     if 'cuda' in args.device:
@@ -487,6 +489,7 @@ if __name__ == '__main__':
     print('output path for exp {}: {}'.format(exp_id, output_path))
     
     text = ''' StyleTTS 2 is a text to speech model that leverages style diffusion and adversarial training with large speech language models to achieve human level text to speech synthesis. '''
+    # text = 'StyleTTS 2 is a text to speech model.' # test with a short sentence
 
     ## Basic synthesis (5 diffusion steps, seen speakers)
 
@@ -1546,3 +1549,4 @@ if __name__ == '__main__':
     rtf_avg = np.mean(rtfs)
     print('average RTF (adaptation, unseen speakers, diffusion_steps: {}, embedding_scale: {}): {:.4f}'.format(
         diffusion_steps, embedding_scale, rtf_avg))
+                

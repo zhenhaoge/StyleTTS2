@@ -18,15 +18,16 @@ from tqdm import tqdm
 from multiprocessing import Pool
 
 # set paths
-home_path = str(Path.home())
-work_path = os.path.join(home_path, 'code', 'repo', 'style-tts2')
-if os.getcwd() != work_path:
-    os.chdir(work_path)
+home_dir = str(Path.home())
+work_dir = os.path.join(home_dir, 'code', 'repo', 'style-tts2')
+if os.getcwd() != work_dir:
+    os.chdir(work_dir)
 print('current path: {}'.format(os.getcwd()))
 
 from utils import set_path
 
 punc_map = {'<COMMA>':',', '<PERIOD>':'.', '<QUESTIONMARK>':'?', '<EXCLAMATIONPOINT>':'!'}
+punc_list = list(punc_map.values())
 
 def process_text(text, punc_map):
     for k,v in punc_map.items():
@@ -36,12 +37,12 @@ def process_text(text, punc_map):
 
 def extract_meta(args):
 
-    audio_dict, meta_path, verbose = args
+    audio_dict, meta_dir, verbose = args
 
     opus_rel_path = audio_dict['path']
     # meta_rel_path = opus_rel_path.replace('audio', '').replace('.opus', '.json').strip('/')
     meta_rel_path = opus_rel_path.replace('audio/', '').replace('.opus', '.json')
-    meta_file = os.path.join(meta_path, meta_rel_path)
+    meta_file = os.path.join(meta_dir, meta_rel_path)
     meta_dir = os.path.dirname(meta_file)
     set_path(meta_dir)
 
@@ -55,6 +56,7 @@ def extract_meta(args):
             print(f'meta file: {meta_file} already exist')
 
 def get_texts(meta_file):
+    """get the normalized text from meta file"""
     with open(meta_file) as f:
         audio_dict = json.load(f)
     texts = [segment['text_tn'] for segment in audio_dict['segments']]
@@ -62,6 +64,7 @@ def get_texts(meta_file):
     return texts
 
 def get_tag(texts):
+    """get tag:count dict"""
 
     tag_list = []
     for i, text in enumerate(texts):
@@ -79,7 +82,7 @@ def get_tag(texts):
                     raise Exception(f'check text {i} with idx_start:{idx_start} and idx_end:{idx_end}!')
 
     tag_dict = {}
-    for tag in punc_list:
+    for tag in tag_list:
         if tag in tag_dict.keys():
             tag_dict[tag] += 1
         else:
@@ -97,12 +100,19 @@ def get_acc_tag(tag_acc_dict, tag_dict):
     return tag_acc_dict            
 
 def segment_audio(args):
+    """segment audio recording into audio segments given audio meta data in dict and input/output dirs"""
 
-    audio_dict, data_path, output_path = args
+    # parse arguments
+    # data_dir: '/home/users/zge/code/repo/style-tts2/Datasets/GigaSpeech-Zhenhao'
+    # output_dir: '/home/users/zge/code/repo/style-tts2/Datasets/GigaSpeech-Zhenhao/segment'
+    audio_dict, data_dir, output_dir = args
 
+    # get the relative path for opus audio file
     opus_rel_path = audio_dict['path']
+    # get category (podcast, youtube, audiobook, etc.) and pid (e.g., P0001)
     cat, pid = opus_rel_path.split('/')[1:3]
-    aid = audio_dict['aid']
+    # get audio id (e.g., 'POD0000000001')
+    aid =  audio_dict['aid']
     sample_rate = audio_dict['sample_rate']
     segments = audio_dict['segments']
     num_segments = len(segments)
@@ -112,35 +122,60 @@ def segment_audio(args):
 
     # get the wav path based on opus path (generated in convert_audio_gigaspeech.py)
     wav_rel_path = opus_rel_path.replace('.opus', '.wav')
-    wav_path = os.path.join(data_path, wav_rel_path)
+    wav_path = os.path.join(data_dir, wav_rel_path)
     assert os.path.isfile(wav_path), f'wav path {wav_path} does not exist!'
 
     # create segment dir
-    seg_dir = os.path.join(output_path, cat, pid, aid)
+    seg_dir = os.path.join(output_dir, cat, pid, aid)
     os.makedirs(seg_dir, exist_ok=True)
 
     for j in range(num_segments):
         segment = segments[j]
         sid = segment['sid']
 
+        # get the duration (used to valid the wav file is not empty)
+        begin_time = segment['begin_time']
+        end_time = segment['end_time']
+        duration = round(end_time-begin_time, 2)
+
         # set output files for the current segment
         seg_path = os.path.join(seg_dir, f'{sid}.wav')
         txt_path = os.path.join(seg_dir, f'{sid}.txt')
         json_path = os.path.join(seg_dir, f'{sid}.json')
 
-        # check file existence
-        cond1 = os.path.isfile(seg_path)
-        cond2 = os.path.isfile(seg_path)
-        cond3 = os.path.isfile(json_path)
+        # check if the segment wav path
+        cond11 = os.path.isfile(seg_path)
+        if cond11:
+            dur = librosa.get_duration(filename=seg_path)
+            cond12 = dur > 0.0 and dur <= duration + 0.01
+        else:
+            cond12 = False
+        cond1 = cond11 and cond12
+
+        # check if the text path is valid
+        cond21 = os.path.isfile(txt_path)
+        if cond21:
+            lines = open(txt_path, 'r').readlines()
+            nlines = len(lines)
+            cond22 = nlines == 1
+        else:
+            cond22 = False
+        cond2 = cond21 and cond22
+
+        # check if the json path is valid
+        cond31 = os.path.isfile(json_path)
+        if cond31:
+            nlines_json = len(open(json_path, 'r').readlines())
+            cond32 = nlines_json > 0
+        else:
+            cond32 = False
+        cond3 = cond31 and cond32
 
         if cond1 and cond2 and cond3:
-            print(f'{sid}: already generated, skip ...')
+            # print(f'{sid}: already generated, skip ...')
             continue
         else:
             print(f'{sid}: extracting ...')
-            begin_time = segment['begin_time']
-            end_time = segment['end_time']
-            duration = round(end_time-begin_time, 2)
             text_tn = segment['text_tn']
             text_tn = process_text(text_tn, punc_map)
             y, sr = librosa.load(wav_path, sr=sample_rate, offset=begin_time, duration=duration)
@@ -159,18 +194,19 @@ def segment_audio(args):
                 json.dump(meta, f, indent=2)
 
 # set paths
-data_ori_path = os.path.join(work_path, 'Datasets', 'GigaSpeech')
-data_path = os.path.join(work_path, 'Datasets', 'GigaSpeech-Zhenhao')
-meta_path = os.path.join(data_path, 'metadata')
-output_path = os.path.join(data_path, 'segment')
-set_path(meta_path, verbose=True)
-set_path(output_path, verbose=True)
+data_ori_dir = os.path.join(work_dir, 'Datasets', 'GigaSpeech')
+data_dir = os.path.join(work_dir, 'Datasets', 'GigaSpeech-Zhenhao')
+meta_dir = os.path.join(data_dir, 'metadata')
+output_dir = os.path.join(data_dir, 'segment')
+set_path(meta_dir, verbose=True)
+set_path(output_dir, verbose=True)
 
 verbose = True
 
 # get master metadata jsonfile
-master_jsonfile = os.path.join(data_ori_path, 'GigaSpeech.json')
-assert os.path.isfile(master_jsonfile), 'master jsonfile: {} does not exist!'.format(master_jsonfile)
+master_jsonfile = os.path.join(data_ori_dir, 'GigaSpeech.json')
+assert os.path.isfile(master_jsonfile), \
+    'master jsonfile: {} does not exist!'.format(master_jsonfile)
 
 # loda metadata from the master jsonfile
 with open(master_jsonfile) as f:
@@ -183,7 +219,9 @@ print('# of audios: {}'.format(num_audios)) # 38131 audios
 
 #%% audio-wise meta data extraction
 
-meta_files = sorted(glob.glob(os.path.join(meta_path, '**', '*.json'), recursive=True))
+# generate audio-wise meta data in json format
+# (after this is done, the # of meta json file should be equal to the # of audio recordings)
+meta_files = sorted(glob.glob(os.path.join(meta_dir, '**', '*.json'), recursive=True))
 num_meta_files = len(meta_files)
 print(f'# of meta files: {num_meta_files}')
 
@@ -204,18 +242,24 @@ if num_meta_files < num_audios:
         aid = audio_dict['aid']
         print(f'{i+1}/{num_audios}: extracting meta for audio {aid} ...')
 
-        args = (audio_dict, meta_path, verbose)
+        args = (audio_dict, meta_dir, verbose)
         extract_meta(args)
 
     # #  get audio-wise meta data using using multi-processing
-    # meta_paths = [meta_path for _ in range(num_audios)]
+    # meta_dirs = [meta_dir for _ in range(num_audios)]
     # verboses = [verbose for _ in range(num_audios)]
     # pool = Pool()
-    # pool.map(extract_meta, zip(audio_list, meta_paths, verboses))
+    # pool.map(extract_meta, zip(audio_list, meta_dirs, verboses))
 
 else:
 
-    print('all audio-wise meta data are extracted already, skip meta data extraction.')    
+    print('all audio-wise meta data are extracted already, skip meta data extraction.')
+
+# sanity check: meta files are not empty
+for i in tqdm(range(num_meta_files)):
+    lines = open(meta_files[i], 'r').readlines()
+    if len(lines) == 0:
+        raise Exception(f'{meta_files[i]} is empty!')
 
 #%%  check texts and tags inside
 
@@ -225,14 +269,14 @@ for i in range(num_audios):
 
     # show progress
     if i % itvl == 0:
-        print(f'checking texts from {i} to {min(num_audios, i+itvl)} ...')
+        print(f'checking texts from {i} to {min(num_audios, i+itvl)} (total {num_audios}) ...')
 
     # get current audio info
     audio_dict = audio_list[i]
 
     opus_rel_path = audio_dict['path']
     meta_rel_path = opus_rel_path.replace('audio/', '').replace('.opus', '.json')
-    meta_file = os.path.join(meta_path, meta_rel_path)
+    meta_file = os.path.join(meta_dir, meta_rel_path)
     texts = get_texts(meta_file)
     tag_dict = get_tag(texts)
     tag_acc_dict = get_acc_tag(tag_acc_dict, tag_dict)
@@ -246,33 +290,29 @@ for k, v in tag_acc_dict.items():
 
 # get duration stats (sum, mean, etc.)
 durations = [[] for _ in range(num_audios)]
+num_segments = [0 for _ in range(num_audios)]
 for i in range(num_audios):
 
     audio_dict = audio_list[i]
     segments = audio_dict['segments']
-    num_segments = len(segments)
+    num_segments[i] = len(segments)
+    # print(f'({i}/{num_audios}) # of segments: {num_segments[i]}')
 
-    durations[i] = [0 for _ in range(num_segments)]
-    for j in range(num_segments):
+    durations[i] = [0 for _ in range(num_segments[i])]
+    for j in range(num_segments[i]):
         durations[i][j] = segments[j]['end_time'] - segments[j]['begin_time']
 
-durations_1d = [sum(durs) for durs in durations]
-duration_total = sum(durations_1d)
-duration_mean = np.mean(durations_1d)
+num_segments_total = int(sum(num_segments))
+num_segments_mean = num_segments_total/num_audios
+durations_audio = [sum(durs) for durs in durations]
+duration_total = sum(durations_audio)
+duration_audio_mean = np.mean(durations_audio)
+duration_segment_mean = duration_total / num_segments_total
+print(f'total #segments in GigaSpeech: {num_segments_total}') # 8315357 segments
+print('mean #segments in GigaSpeech per recording: {:.2f}'.format(num_segments_mean)) # 218.07 #segments
 print('total duration of GigaSpeech: {:.2f} hrs.'.format(duration_total/3600)) # 10050.65 hrs.
-print('mean duration of GigaSpeech per recording: {:.2f} min.'.format(duration_mean/60)) # 15.81 min.
-
-# get #segments stats (sum, mean, etc.)
-nsegments = [0 for _ in range(num_audios)]
-for i in range(num_audios):
-    audio_dict = audio_list[i]
-    segments = audio_dict['segments']
-    nsegments[i] = len(segments)
-
-nsegments_total = sum(nsegments)
-nsegments_mean = np.mean(nsegments)
-print(f'total #segments in GigaSpeech: {nsegments_total}') # 8315357 segments
-print('mean #segments in GigaSpeech per recording: {:.2f}'.format(nsegments_mean)) # 218.07 #segments
+print('mean duration of GigaSpeech per audio recording: {:.2f} min.'.format(duration_audio_mean/60)) # 15.81 min.
+print('mean duration of GigaSpeech per audio segment: {:.2f} sec.'.format(duration_segment_mean)) # 4.35 sec.
 
 #%% get sid2path dict (sid: wav relative path)
 
@@ -291,45 +331,46 @@ for i in range(num_audios):
     # print(f'extracting segments for audio {aid} ...')
 
     # set segment dir
-    seg_dir = os.path.join(output_path, cat, pid, aid)
+    seg_dir = os.path.join(output_dir, cat, pid, aid)
    
     for j in range(num_segments):
         segment = segments[j]
         sid = segment['sid']
         seg_path = os.path.join(seg_dir, f'{sid}.wav')
-        seg_rel_path = seg_path.replace('{}/'.format(data_path), '')
+        seg_rel_path = seg_path.replace('{}/'.format(data_dir), '')
         sid2path[sid] = seg_rel_path
 
 num_sids = len(sid2path)
 print(f'# of segment ids: {num_sids}')
-assert num_sids == nsegments_total, f'# sids ({num_sids}) must be equal to the total #segments ({nsegments_total})!'
+assert num_sids == num_segments_total, \
+    f'# sids ({num_sids}) must be equal to the total #segments ({num_segments_total})!'
 
-sid2path_file = os.path.join(data_path, 'sid2path.txt')
+sid2path_file = os.path.join(data_dir, 'sid2path.txt')
 itvl = 100000
 with open(sid2path_file, 'w') as f:
     for i, (k,v) in enumerate(sid2path.items()):
         if i % itvl == 0:
-            print(f'writing line {i} ~ {min(num_sids, i+itvl)} ...')
+            print(f'writing line {i} ~ {min(num_sids, i+itvl)} (total {num_sids}) ...')
         f.write('{}|{}\n'.format(k,v))
     f.write('\n')
 
 #%% extract audio segments
 
 # dummy replications for the parallel runs
-data_paths = [data_path for _ in range(num_audios)]
-output_paths = [output_path for _ in range(num_audios)]
+data_dirs = [data_dir for _ in range(num_audios)]
+output_dirs = [output_dir for _ in range(num_audios)]
 
-# # extract segments using for-loop
-# for args in tqdm(zip(audio_list, data_paths, output_paths)):
+# # extract segments using for-loop (~40 hours)
+# for i, args in enumerate(tqdm(zip(audio_list, data_dirs, output_dirs))):
 
-#     audio_dict, data_path, output_path = args
+#     audio_dict, data_dir, output_dir = args
 
 #     # show progress
 #     aid = audio_dict['aid']
-#     print(f'extracting segments for audio {aid} ...')
+#     print(f'{i}/{num_audios}: extracting segments for audio {aid} ...')
 
 #     segment_audio(args)
 
 # extract segments using multi-processing
 pool = Pool()
-pool.map(segment_audio, zip(audio_list, data_paths, output_paths))
+pool.map(segment_audio, zip(audio_list, data_dirs, output_dirs))

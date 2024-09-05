@@ -28,14 +28,14 @@ if __main__ == '__main__':
     # runtime mode
     args = parse_args()
 
-    # interactive mode
-    args = argparse.ArgumentParser()
+    # # interactive mode
+    # args = argparse.ArgumentParser()
 
-    args.percent = 0.1
-    args.seed = 1234
-    str_pct = f'{int(args.percent*100)}p'
-    args.in_listfile = os.path.join(work_dir, 'Data', 'GigaSpeech', 'train_list.txt')
-    args.out_listfile = args.in_listfile.replace('.txt', f'_{str_pct}_{args.seed}.txt')
+    # args.percent = 0.1
+    # args.seed = 1234
+    # str_pct = f'{int(args.percent*100)}p'
+    # args.in_listfile = os.path.join(work_dir, 'Data', 'GigaSpeech', 'train_list.txt')
+    # args.out_listfile = args.in_listfile.replace('.txt', f'_{str_pct}_{args.seed}.txt')
 
     # check dir/file existence
     assert os.path.isfile(args.in_listfile), f'input list file: {args.in_listfile} does not exist!'

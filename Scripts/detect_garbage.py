@@ -157,13 +157,3 @@ if __name__ == '__main__':
     # energy = path_dct[wav_id]['energy']
     # print(wav_filepath)
 
-
-    
-
-
-
-
-
-
-
-

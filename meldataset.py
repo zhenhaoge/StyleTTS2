@@ -94,9 +94,13 @@ class FilePathDataset(torch.utils.data.Dataset):
         spect_params = SPECT_PARAMS
         mel_params = MEL_PARAMS
 
+        # split data list
         _data_list = [l.strip().split('|') for l in data_list]
+
+        # add dummy speaker id 0 for the single speaker case
         # dataset_data_list = [data if data[-1].isdigit() else (*data, 0) for data in _data_list]
         self.data_list = [data if data[-1].isdigit() else (*data, 0) for data in _data_list]
+
         # dataset_text_cleaner = TextCleaner()
         self.text_cleaner = TextCleaner()
         self.sr = sr
@@ -147,9 +151,13 @@ class FilePathDataset(torch.utils.data.Dataset):
         # get a random in-domain reference audio sample
         # idx_speaker = dataset_df.shape[1] - 1
         idx_speaker = self.df.shape[1] - 1
-        # ref_data = (dataset_df[dataset_df[idx_speaker] == str(speaker_id)]).sample(n=1).iloc[0].tolist()
-        ref_data = (self.df[self.df[idx_speaker] == str(speaker_id)]).sample(n=1).iloc[0].tolist()
+        # print(f'idx of speaker: {idx_speaker}')
+        # subset_speaker = dataset_df[dataset_df[idx_speaker] == str(speaker_id)]
+        subset_speaker = self.df[self.df[idx_speaker] == str(speaker_id)]
+        # print(f'subset shape: {subset_speaker.shape}')
+        ref_data = (subset_speaker).sample(n=1).iloc[0].tolist()
         # get the reference mel and ref speaker label
+        # ref_mel_tensor, ref_label = dataset._load_data(ref_data)
         ref_mel_tensor, ref_label = self._load_data(ref_data)
         
         # get a random out-of-domain (OOD) reference text sample
@@ -180,9 +188,13 @@ class FilePathDataset(torch.utils.data.Dataset):
         speaker_id = int(speaker_id)
         # wave, sr = sf.read(osp.join(dataset_root_path, wave_path))
         wave, sr = sf.read(osp.join(self.root_path, wave_path))
+
+        # convert to mono if needed
         if wave.shape[-1] == 2:
             wave = wave[:, 0].squeeze()
+
         if sr != self.sr:
+            # wave = librosa.resample(wave, orig_sr=sr, target_sr=dataset.sr)
             wave = librosa.resample(wave, orig_sr=sr, target_sr=self.sr)
             # print('resampled {} from sr:{} to sr:{}'.format(wave_path, sr, self.sr))
 
@@ -202,6 +214,8 @@ class FilePathDataset(torch.utils.data.Dataset):
         return wave, token, speaker_id
 
     def _load_data(self, data):
+
+        # wave, _, speaker_id = dataset._load_tensor(data)
         wave, _, speaker_id = self._load_tensor(data)
 
         mel_tensor = preprocess(wave).squeeze()
@@ -275,11 +289,7 @@ class Collater(object):
 
         return waves, texts, input_lengths, ref_texts, ref_lengths, mels, output_lengths, ref_mels
 
-
-
-def build_dataloader(path_list,
-                     root_path,
-                     sr,
+def build_dataloader(path_list, root_path, sr,
                      validation=False,
                      OOD_data="Data/OOD_texts.txt",
                      min_length=50,
@@ -289,9 +299,7 @@ def build_dataloader(path_list,
                      collate_config={},
                      dataset_config={}):
     
-    dataset = FilePathDataset(path_list,
-                              root_path,
-                              sr,
+    dataset = FilePathDataset(path_list, root_path, sr,
                               OOD_data=OOD_data,
                               min_length=min_length,
                               validation=validation,
