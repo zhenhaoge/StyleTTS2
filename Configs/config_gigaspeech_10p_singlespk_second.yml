@@ -1,4 +1,4 @@
-log_dir: "Models/GigaSpeech"
+log_dir: "Models/GigaSpeech/10p_singlespk"
 first_stage_path: "epoch_1st_00130.pth" # used in the second stage
 save_freq: 1
 log_interval: 10
@@ -7,7 +7,7 @@ epochs_1st: 200 # number of epochs for first stage training (pre-training)
 epochs_2nd: 100 # number of epochs for second stage training (joint training)
 batch_size: 8
 max_len: 400 # maximum number of frames
-pretrained_model: "Models/GigaSpeech/epoch_2nd_00049.pth" # load pretrained model trained previously in the current stage
+pretrained_model: "Models/GigaSpeech/10p_singlespk/epoch_2nd_00049.pth" # load pretrained model trained previously in the current stage
 second_stage_load_pretrained: true # set to true if the pre-trained model is for 2nd stage
 load_only_params: false # set to true if do not want to load epoch numbers and optimizer parameters
 
@@ -17,7 +17,7 @@ ASR_path: "Utils/ASR/epoch_00080.pth"
 PLBERT_dir: 'Utils/PLBERT/'
 
 data_params:
-  train_data: "Data/GigaSpeech/train_list_10p_1234.txt"
+  train_data: "Data/GigaSpeech/train_list_10p_nodur.backup.txt"
   val_data: "Data/GigaSpeech/val_list_nodur.txt"
   root_path: "Datasets/GigaSpeech-Zhenhao"
   OOD_data: "Data/OOD_texts.txt"

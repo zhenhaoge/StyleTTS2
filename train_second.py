@@ -56,6 +56,8 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 def main(config_path):
 
     # config_path = 'Configs/config_ljspeech_second.yml'
+    # config_path = 'Configs/config_gigaspeech_10p_singlespk_second.yml'
+    # config_path = 'Configs/config_gigaspeech_multispk_second.yml'
     config = yaml.safe_load(open(config_path))
     
     log_dir = config['log_dir']
@@ -268,8 +270,8 @@ def main(config_path):
         for i, batch in enumerate(train_dataloader):
 
             waves = batch[0]
-            batch = [b.to(device) for b in batch[1:]]
-            texts, input_lengths, ref_texts, ref_lengths, mels, mel_input_length, ref_mels = batch
+            batch1 = [b.to(device) for b in batch[1:]]
+            texts, input_lengths, ref_texts, ref_lengths, mels, mel_input_length, ref_mels = batch1
 
             with torch.no_grad():
                 mask = length_to_mask(mel_input_length // (2 ** n_down)).to(device)
@@ -389,8 +391,8 @@ def main(config_path):
             s = model.style_encoder(st.unsqueeze(1) if multispeaker else gt.unsqueeze(1))
             
             with torch.no_grad():
-                # gt.shape: [4, 80, 200]
-                # gt.unsqueeze(1).shape: [4, 1, 80, 200]
+                # gt.shape: [batch_size, model_params.n_mels, max_len]
+                # gt.unsqueeze(1).shape: [batch_size, 1, model_params.n_mels, max_len]
                 F0_real, _, F0 = model.pitch_extractor(gt.unsqueeze(1))
                 if len(F0_real.shape) == 1 and F0_real.shape[0] == len(mel_input_length) * gt.shape[-1]:
                     F0_real = torch.reshape(F0_real, (len(mel_input_length), gt.shape[-1]))
@@ -404,15 +406,16 @@ def main(config_path):
 
                 asr_real = model.text_aligner.get_feature(gt)
 
-                N_real = log_norm(gt.unsqueeze(1)).squeeze(1)
+                N_real = log_norm(gt.unsqueeze(1)).squeeze(1) # originally used in the second stage
+                # N_real = log_norm(gt.unsqueeze(1)).squeeze(1).detach() # try this to be consistent with first stage
                 
                 y_rec_gt = wav.unsqueeze(1)
 
-                # check shape with (batch_size=4, max_len=200)
-                # en.shape: [4, 512, 100]
-                # F0_real.shape: [800]
-                # N_real.shape: [4, 200]
-                # s.shape: [4, 128]
+                # check shape
+                # print(f'en.shape: {en.shape}') # [batch_size, 512, mel_len], mel_len is max_len/2
+                # print(f'F0_real.shape: {F0_real.shape}') # [batch_size, max_len]
+                # print(f'N_real.shape: {N_real.shape}') # [batch_size, max_len]
+                # print(f's.shape: {s.shape}') # [batch_size, 128]
                 y_rec_gt_pred = model.decoder(en, F0_real, N_real, s) # this line need to fix
 
                 if epoch >= joint_epoch:

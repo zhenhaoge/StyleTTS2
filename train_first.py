@@ -312,6 +312,10 @@ def main(config_path):
             # F0_real.shape: [4,200]
             # real_norm.shape: [4,200]
             # s.shape: [4,128]
+            # print(f'en.shape: {en.shape}') # [batch_size, 512, mel_len], mel_len is max_len/2
+            # print(f'F0_real.shape: {F0_real.shape}') # [batch_size, max_len]
+            # print(f'real_norm.shape: {real_norm.shape}') # [batch_size, max_len]
+            # print(f's.shape: {s.shape}') # [batch_size, 128]
             y_rec = model.decoder(en, F0_real, real_norm, s)
             
             # discriminator loss

@@ -28,7 +28,7 @@ def parse_args():
     parser.add_argument('--dur-lim', type=int, help='duration to be processed in minutes')
     parser.add_argument('--out-file', type=str, help='output audio file')
     parser.add_argument('--with-bg', type=str2bool, nargs='?', const=True,
-        default=False, help="true if use master style")
+        default=False, help="true if include the background")
     parser.add_argument('--r', type=float, default=1.0, help='ratio of the reduced volumne of the background audio vs full volume ' + \
         '(1: no reduce, 0: reduce completly)')
     return parser.parse_args()
