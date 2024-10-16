@@ -54,8 +54,9 @@ from audio import audioread, audiowrite
 # from pyannote.audio import Inference
 # spkr_embedding = Inference("pyannote/embedding", window="whole")
 
+sr = 24000 # TTS audio sampling rate
 punctuations = '.,:;?!'
-meter = pyln.Meter(24000)
+meter = pyln.Meter(sr)
 
 def gen_text_olw(text, win_size, step_size):
     """generate texts from text using overlapped windowing (gen_text_olw)"""
@@ -230,7 +231,7 @@ def get_tgfile_tuples(texts, tgfiles, nwords_future):
             idx_word_end = len(words_upto_current[i])
         tgfile_tuples[i] = [tgfiles[i+idx_start], words_current[i], idx_word_start, idx_word_end]
 
-    return tgfile_tuples         
+    return tgfile_tuples
 
 def inference(text, ref_s, ref_text='', s_prev=None, t=0.7, alpha=0.3, beta = 0.7, diffusion_steps=5, embedding_scale=1, nframes_cut=50):
 
@@ -505,6 +506,7 @@ if __name__ == '__main__':
     # texts = gen_text_olw(text, win_size, step_size)
     texts = gen_text_acc(ref_text, step_size=2)
     ntexts = len(texts)
+    print(f'# of texts: {ntexts}')
 
     durations_proc = [0 for _ in range(ntexts)]
     durations_out = [0 for _ in range(ntexts)]
@@ -512,6 +514,7 @@ if __name__ == '__main__':
     wavs = ['' for _ in range(ntexts)]
     s_preds = ['' for _ in range(ntexts)]
 
+    # perform inference and get processing durations
     ref_text = ''
     s_prev = None
     t = 0.7
@@ -521,7 +524,10 @@ if __name__ == '__main__':
     embedding_scale = 1
     nframes_cut = 50
     for i, text in enumerate(texts):
+        
+        # print the text
         print(text)
+
         start_time = time.time()
         wavs[i], s_preds[i] = inference(text, ref_s, 
                         ref_text=ref_text,
@@ -534,32 +540,46 @@ if __name__ == '__main__':
                         nframes_cut=nframes_cut)
         end_time = time.time()
         durations_proc[i] = end_time - start_time
-        durations_out[i] =  len(wavs[i])
+
+    # compute the output durations and rtfs
+    for i in range(ntexts):
+        durations_out[i] = len(wavs[i]) / sr
         rtfs[i] = durations_proc[i] / durations_out[i]
 
-    # generaete the audio and text (unpunctuated) files
+    # construct the output audio and text files
     out_wavfiles = ['' for _ in range(ntexts)]
     out_txtfiles = ['' for _ in range(ntexts)]
     for i in range(ntexts):
 
-        # write the wav file
+        # construct the audio files 
         filename = 'basic-{}-{}-{}-{}-{}-{}.wav'.format(ref_id, i, diffusion_steps, embedding_scale, alpha, beta)
         out_wavfiles[i] = os.path.join(output_path, filename)
-        sf.write(out_wavfiles[i], wavs[i], 24000)
-        
-        # write the txt file
-        filename = filename.replace('.wav', '.txt')
-        out_txtfiles[i] = os.path.join(output_path, filename)
-        # get unpunctuated text
-        text_nopunct = remove_punc(texts[i], punctuations)
-        # write unpunctuated text
-        open(out_txtfiles[i], 'w').writelines(text_nopunct + '\n')
 
-    out_tgfiles = ['' for _ in range(ntexts)]
+        # construct the text files
+        filename = filename.replace('.wav', '.txt')
+        out_txtfiles[i] = os.path.join(output_path, filename) 
+
+    # generaete the audio and text (unpunctuated) files
     for i in range(ntexts):
 
-        # write the TextGrid alignment file
+        # write the wav file
+        sf.write(out_wavfiles[i], wavs[i], 24000)
+
+        # get unpunctuated text
+        text_nopunct = remove_punc(texts[i], punctuations)
+        # write unpunctuated text to the text file
+        open(out_txtfiles[i], 'w').writelines(text_nopunct + '\n')
+
+    # construct the output TextGrid files
+    out_tgfiles = ['' for _ in range(ntexts)]
+    for i in range(ntexts):
         out_tgfiles[i] = out_wavfiles[i].replace('.wav', '.TextGrid')
+        
+    # write the TextGrid alignment file
+    out_tgfiles = ['' for _ in range(ntexts)]
+    for i in range(ntexts):
+        
+        # run the force alignment command in subprocess
         command = ['python', os.path.join(align_path, 'align.py'), '--output', out_tgfiles[i], out_wavfiles[i], out_txtfiles[i]]
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
@@ -591,6 +611,7 @@ if __name__ == '__main__':
 
     idx_start = [i for i, text in enumerate(texts) if len(text.split())>nwords_future][0]
     ntexts2 = ntexts - idx_start
+    texts2 = texts[idx_start:]
 
     # extract the words from tgfiles based on tgfile_tuples
     seg_list = [{} for _ in range(ntexts2)]
@@ -623,6 +644,26 @@ if __name__ == '__main__':
         sf.write(seg_wavfile2, y, 24000)
         print(f'{i}/{ntexts2}: wrote {seg_wavfile2}')
 
+    # collect texts and audio samples in csv (before getting concatenated sample)
+    rows = [() for _ in range(ntexts2)]
+    for i in range(ntexts2):
+        text = texts2[i]
+        nwords = len(text.split())
+        tgfile, words_current, idx_word_start, idx_word_end = tgfile_tuples[i]
+        wavfile = tgfile.replace('.TextGrid', '.wav')
+        dur_all = librosa.get_duration(filename=wavfile, sr=24000)
+        seg_wavfile = wavfile.replace('.wav', f'_{idx_word_start}-{idx_word_end}_t{tolerance}_M1.wav')
+        dur_words = librosa.get_duration(filename=seg_wavfile, sr=24000)
+        text_current = ' '.join(words_current)
+        fid = os.path.splitext(os.path.basename(tgfile))[0]
+        seg_id = f'{fid}_{idx_word_start}-{idx_word_end}_t{tolerance}'
+        dur_proc = durations_proc[i+idx_start]
+        rtf = rtfs[i+idx_start]
+        rows[i] = (i, text, nwords, text_current, fid, seg_id, f'{dur_proc:.3f}', f'{dur_all:.3f}', f'{rtf:.3f}', f'{dur_words:.3f}')
+    csvfile = os.path.join(args.output_path, f'exp-{exp_id:02d}.csv')
+    header = ['id', 'text', 'nwords', 'words', 'file-id', 'seg-id', 'dur-proc', 'dur-all', 'rtf', 'dur-words']
+    tuple2csv(rows, csvfile, delimiter="|", header=header)
+    
     # method 1: write the concatenated audio (no crossfading) using audiowrite
     wavfile_concat1 = os.path.join(output_path, f'basic-{ref_id}_concat_t{tolerance}_M1.wav')
     data_list = [seg['data'] for seg in seg_list]
