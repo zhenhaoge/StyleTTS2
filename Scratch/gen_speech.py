@@ -1,18 +1,22 @@
+# Generate TTS speech using StyleTTS2 based on the text generation scheme
+#
+# Experiment the quality and speed using word-level accumulation method to generate speech in a streaming setting
+# 1st step: generate TTS speech samples 
+#
+# Zhenhao Ge, 2024-10-22
+
 import os
 from pathlib import Path
 import torch
 import glob
 import subprocess
+import shutil
 
-torch.manual_seed(0)
 torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = True
 
 import random
-random.seed(0)
-
 import numpy as np
-np.random.seed(0)
 
 # load packages
 import time
@@ -31,7 +35,6 @@ from shutil import copyfile
 import json
 import pyloudnorm as pyln
 import phonemizer
-from pydub import AudioSegment
 
 from numpy.linalg import norm
 from librosa.util import normalize
@@ -41,7 +44,6 @@ work_path = os.path.join(home_path, 'code', 'repo', 'style-tts2')
 if os.getcwd() != work_path:
     os.chdir(work_path)
 print('current path: {}'.format(os.getcwd()))
-align_path = os.path.join(home_path, 'code', 'repo', 'gentle')
 
 from models import *
 from utils import *
@@ -55,8 +57,9 @@ from audio import audioread, audiowrite
 # from pyannote.audio import Inference
 # spkr_embedding = Inference("pyannote/embedding", window="whole")
 
+sr = 24000 # TTS audio sampling rate
 punctuations = '.,:;?!'
-meter = pyln.Meter(24000)
+meter = pyln.Meter(sr)
 
 def gen_text_olw(text, win_size, step_size):
     """generate texts from text using overlapped windowing (gen_text_olw)"""
@@ -96,106 +99,14 @@ def remove_punc(text, punctuations):
 
     words = text.split()
     nwords = len(words)
-
+    
     words2 = []
     for i in range(nwords):
         if words[i] not in punctuations:
             words2.append(words[i])
     text2 = ' '.join(words2)
-
-    return text2
-
-def extract_word_ts(tgfile, idx_word_start=0, idx_word_end=-1):
-    """extract word and timestamp tuples from the TextGrid file in json format"""
-    with open(tgfile, 'r') as json_file:
-        data_dict = json.load(json_file)
-    nwords = len(data_dict['words'])
-    if idx_word_end == -1:
-        idx_word_end = nwords
     
-    # wavfile = tgfile.replace('.TextGrid', '.wav')
-    # duration = librosa.get_duration(filename=wavfile)
-
-    word_ts = []
-    for i in range(idx_word_start, idx_word_end):
-        word = data_dict['words'][i]
-        alignedWord = word['alignedWord']
-        start_time = round(float(word['start']), 2)
-        end_time = round(float(word['end']), 2)
-        word_ts.append([alignedWord, start_time, end_time])
-
-    # adjust the start time of the first word based on the gap to the previous word
-    if idx_word_start > 0:
-        word_previous = data_dict['words'][idx_word_start-1]
-        end_time_previous = round(float(word_previous['end']), 2)
-        start_time_first = word_ts[0][1]
-        start_time_first_updated = round((start_time_first+end_time_previous)/2, 2)
-        word_ts[0][1] = start_time_first_updated
-
-    # adjust the end time of the last word based on the gap of the next word
-    if idx_word_end < nwords:
-        word_next = data_dict['words'][idx_word_end]
-        start_time_next = round(float(word_next['start']), 2)
-        end_time_last = word_ts[-1][2]
-        end_time_last_updated = round((start_time_next+end_time_last)/2, 2)
-        word_ts[-1][2] = end_time_last_updated
-
-    return word_ts
-
-def get_tgfile_tuples(texts, tgfiles, nwords_future):
-
-    ntexts = len(texts)
-    ntgfiles = len(tgfiles)
-    assert ntexts == ntgfiles, 'len(texts) and len(tgfiles) mis-match!'
-
-    # get the start idx of texts (the first text with nwords > nwords_future)
-    idx_start = [i for i, text in enumerate(texts) if len(text.split())>nwords_future][0]
-
-    words_upto_current = [[] for _ in range(ntexts-idx_start)]
-    for i in range(idx_start, ntexts):
-        words_upto_current[i-idx_start] = texts[i].split()[:-nwords_future]
-
-    # # sanity check: print out words upto the current
-    # for i, words in enumerate(words_upto_current):
-    #     print(f'{i}/{ntexts-idx_start}: ' + ' '.join(words))
-
-    words_current = ['' for _ in range(ntexts-idx_start)]
-    words_current[0] = words_upto_current[0]
-
-    # fid_idxs_tuples = ['' for _ in range(ntexts-idx_start)]
-    # fid = os.path.splitext(os.path.basename(out_wavfiles[idx_start]))[0]
-    # idx_word_start = 0
-    # idx_word_end = len(words_upto_current[0])
-    # fid_idxs_tuples[0] = (fid, idx_word_start, idx_word_end)
-
-    for i in range(idx_start+1, ntexts):
-
-        idx_word_start = len(words_upto_current[i-idx_start-1])
-        idx_word_end = len(words_upto_current[i-idx_start])
-        # print(f'i:{i}, idx: {idx_word_start}, {idx_word_end}')
-        words_current[i-idx_start] = words_upto_current[i-idx_start][idx_word_start:idx_word_end]
-
-        # fid = os.path.splitext(os.path.basename(out_wavfiles[i]))[0]
-        # fid_idxs_tuples[i-idx_start] = (fid, idx_word_start, idx_word_end)
-
-    # # sanity check: print out the final current words
-    # for i, words in enumerate(words_current):
-    #     print(f'{i}/{ntexts-idx_start}: ' + ' '.join(words))
-
-    # get tgfile tuples (tgfile, words, idx_word_start, idx_word_end)
-    ntexts2 = ntexts - idx_start
-    assert len(words_current) == ntexts2, 'check words_current!'
-    tgfile_tuples = [() for _ in range(ntexts2)]
-    for i in range(ntexts2):
-        if i == 0:
-            idx_word_start = 0
-            idx_word_end = len(words_upto_current[i])
-        else:
-            idx_word_start = len(words_upto_current[i-1])
-            idx_word_end = len(words_upto_current[i])
-        tgfile_tuples[i] = [tgfiles[i+idx_start], words_current[i], idx_word_start, idx_word_end]
-
-    return tgfile_tuples         
+    return text2    
 
 def inference(text, ref_s, ref_text='', s_prev=None, t=0.7, alpha=0.3, beta = 0.7, diffusion_steps=5, embedding_scale=1, nframes_cut=50):
 
@@ -290,12 +201,16 @@ def inference(text, ref_s, ref_text='', s_prev=None, t=0.7, alpha=0.3, beta = 0.
     return out2, s_pred
 
 def parse_args():
-    usage = 'usage: test1'
+
+    usage = 'usage: generate TTS speech for word-level accumulation method'
     parser = argparse.ArgumentParser(description=usage)
     parser.add_argument('--config-path', type=str, help='config path')
     parser.add_argument('--model-path', type=str, help='model path')
-    parser.add_argument('--output-path', type=str, help='output path')
+    parser.add_argument('--output-path', type=str, help='root output path')
     parser.add_argument('--data-path', type=str, help='data path')
+    parser.add_argument('--ref-wav-rel-path', type=str, help='reference wav relative path')
+    parser.add_argument('--exp-id', type=str, help='exp id')
+    parser.add_argument('--seed', type=int, default=0, help='random seed')
     parser.add_argument('--device', type=str, default='cpu', help='gpu/cpu device')
     return parser.parse_args()
 
@@ -312,7 +227,14 @@ if __name__ == '__main__':
     # args.model_path = os.path.join(work_path, 'Models', 'LibriTTS', 'epochs_2nd_00020.pth')
     # args.output_path = os.path.join(work_path, 'Outputs', 'Scratch', 'LibriTTS')
     # args.data_path = os.path.join(work_path, 'Datasets', 'GigaSpeech-Zhenhao')
+    # args.ref_wav_rel_path = 'segment/youtube/P0000/YOU1000000038/YOU1000000038_S0000079.wav'
+    # args.exp_id = 2
+    # args.seed = 1
     # args.device = 'cuda:0' # 'cuda', 'cuda:x', or 'cpu'
+
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
 
     # set and create output dir (if needed)
     set_path(args.output_path)
@@ -345,7 +267,7 @@ if __name__ == '__main__':
     print('GPU info: {} @ {}'.format(gpu_info, hostname))
 
     global_phonemizer = phonemizer.backend.EspeakBackend(
-        language='en-us', preserve_punctuation=True,  with_stress=True)
+    language='en-us', preserve_punctuation=True,  with_stress=True)
 
     # load config
     config = yaml.safe_load(open(args.config_path))
@@ -399,23 +321,43 @@ if __name__ == '__main__':
     clamp=False
     )
 
-    exp_id = 1
-    output_path = os.path.join(args.output_path, f'exp-{exp_id:02d}')
-    os.makedirs(output_path, exist_ok=True)
-    print('output path for exp {}: {}'.format(exp_id, output_path))
+    # set the output path
+    if convertible_to_integer(args.exp_id):
+        args.exp_id = int(args.exp_id)
+        output_folder = f'exp-{args.exp_id:02d}'
+    else:
+        output_folder = f'gs-{args.exp_id}'
+    output_path = os.path.join(args.output_path, output_folder) 
+    if not os.path.isdir(output_path):
+        print(f'creating new output dir: {output_path}')
+        os.makedirs(output_path)
+    else:
+        print(f'using existing output dir: {output_path}')    
+    # print('output path for exp {}: {}'.format(exp_id, output_path))
 
-    # text = 'StyleTTS 2 is a text to speech model that leverages style diffusion and adversarial training with large speech language models to achieve human level text to speech synthesis.'
-
-    ref_wav_rel_path = 'segment/youtube/P0000/YOU1000000038/YOU1000000038_S0000079.wav'
-    ref_wav_file = os.path.join(args.data_path, ref_wav_rel_path)
+    # set the reference wav file
+    ref_wav_file = os.path.join(args.data_path, args.ref_wav_rel_path)
     assert os.path.isfile(ref_wav_file), f'ref wav file {ref_wav_file} does not exist!'
 
+    # set the reference text file (associated with the reference wav file)
     ref_txt_file = ref_wav_file.replace('.wav', '.txt')
     assert os.path.isfile(ref_txt_file), f'ref txt file {ref_txt_file} does not exist!'
 
+    # get the reference text
     lines = open(ref_txt_file, 'r').readlines()
     assert len(lines) == 1, f'more than 1 line in the text file: {ref_txt_file}'
     ref_text = lines[0].strip()
+
+    # copy the refrence wav and text files to the output dir
+    filename_wav = os.path.basename(ref_wav_file).replace('.wav', '_reference.wav')
+    ref_wav_file2 = os.path.join(output_path, filename_wav)
+    shutil.copyfile(ref_wav_file, ref_wav_file2)
+    print(f'{ref_wav_file} -> {ref_wav_file2}')
+
+    filename_txt = os.path.basename(ref_txt_file).replace('.txt', '_reference.txt')
+    ref_txt_file2 = os.path.join(output_path, filename_txt)
+    shutil.copyfile(ref_txt_file, ref_txt_file2)
+    print(f'{ref_txt_file} -> {ref_txt_file2}')
 
     ref_id = os.path.splitext(os.path.basename(ref_wav_file))[0]
 
@@ -427,6 +369,8 @@ if __name__ == '__main__':
     # texts = gen_text_olw(text, win_size, step_size)
     texts = gen_text_acc(ref_text, step_size=2)
     ntexts = len(texts)
+    ndigits = len(str(ntexts))
+    print(f'# of texts: {ntexts}')
 
     durations_proc = [0 for _ in range(ntexts)]
     durations_out = [0 for _ in range(ntexts)]
@@ -434,6 +378,7 @@ if __name__ == '__main__':
     wavs = ['' for _ in range(ntexts)]
     s_preds = ['' for _ in range(ntexts)]
 
+    # perform inference and get processing durations
     ref_text = ''
     s_prev = None
     t = 0.7
@@ -443,7 +388,10 @@ if __name__ == '__main__':
     embedding_scale = 1
     nframes_cut = 50
     for i, text in enumerate(texts):
+        
+        # print the text
         print(text)
+
         start_time = time.time()
         wavs[i], s_preds[i] = inference(text, ref_s, 
                         ref_text=ref_text,
@@ -456,82 +404,44 @@ if __name__ == '__main__':
                         nframes_cut=nframes_cut)
         end_time = time.time()
         durations_proc[i] = end_time - start_time
-        durations_out[i] =  len(wavs[i])
+
+    # compute the output durations and rtfs
+    for i in range(ntexts):
+        durations_out[i] = len(wavs[i]) / sr
         rtfs[i] = durations_proc[i] / durations_out[i]
 
-    # generaete the audio and text (unpunctuated) files
+    # construct the output audio, text (unpunctuated), and meta json files
     out_wavfiles = ['' for _ in range(ntexts)]
     out_txtfiles = ['' for _ in range(ntexts)]
-    out_tgfiles = ['' for _ in range(ntexts)]
+    out_jsonfiles = ['' for _ in range(ntexts)]
+    for i in range(ntexts):
+
+        # construct the audio files 
+        filename_wav = '{}-{}-{}-{}-{}-{}.wav'.format(ref_id, i, diffusion_steps, embedding_scale, alpha, beta)
+        out_wavfiles[i] = os.path.join(output_path, filename_wav)
+
+        # construct the text files
+        filename_txt = filename_wav.replace('.wav', '.txt')
+        out_txtfiles[i] = os.path.join(output_path, filename_txt)
+
+        # construct the json files
+        filename_json = filename_wav.replace('.wav', '.json')
+        out_jsonfiles[i] = os.path.join(output_path, filename_json)
+
+    # generaete the audio, text (unpunctuated), and meta json files
     for i in range(ntexts):
 
         # write the wav file
-        filename = 'basic-{}-{}-{}-{}-{}-{}.wav'.format(ref_id, i, diffusion_steps, embedding_scale, alpha, beta)
-        out_wavfiles[i] = os.path.join(output_path, filename)
         sf.write(out_wavfiles[i], wavs[i], 24000)
-        
-        # write the txt file
-        filename = filename.replace('.wav', '.txt')
-        out_txtfiles[i] = os.path.join(output_path, filename)
+
         # get unpunctuated text
         text_nopunct = remove_punc(texts[i], punctuations)
-        # write unpunctuated text
+        # write unpunctuated text to the text file
         open(out_txtfiles[i], 'w').writelines(text_nopunct + '\n')
 
-        # write the TextGrid alignment file
-        out_tgfiles[i] = out_wavfiles[i].replace('.wav', '.TextGrid')
-        command = ['python', os.path.join(align_path, 'align.py'), '--output', out_tgfiles[i], out_wavfiles[i], out_txtfiles[i]]
-        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-        # Check if the command was successful
-        if result.returncode == 0:
-            print("Command executed successfully")
-            print(result.stdout)
-        else:
-            print("Error occurred")
-            print(result.stderr)
-
-    # get tuple list for (.TextGrid file, current words, idx_word_start, idx_word_end)
-    nwords_future = 2 # number of words in the future (avoid the distortion on the ending words)
-    tgfile_tuples = get_tgfile_tuples(texts, out_tgfiles, nwords_future)
-
-    # include future words for the last tgfile_tuples
-    tgfile_last = tgfile_tuples[-1][0]
-    idx_word_start = tgfile_tuples[-1][2]
-    words_ts_last = extract_word_ts(tgfile_last, idx_word_start=idx_word_start, idx_word_end=-1)
-    words_last = [sublst[0] for sublst in words_ts_last]
-    tgfile_tuples[-1][1] = words_last
-    tgfile_tuples[-1][3] = idx_word_start + len(words_last)
-   
-    # extract the words from tgfiles based on tgfile_tuples
-    seg_list = [{} for _ in range(ntexts2)]
-    for i in range(ntexts2):
-        tgfile, words, idx_word_start, idx_word_end = tgfile_tuples[i]
-        # words_ts = extract_word_ts(tgfile, idx_word_start=0, idx_word_end=-1)
-        words_ts_sel = extract_word_ts(tgfile, idx_word_start, idx_word_end)
-        # words_ts_sel = word_ts[idx_word_start:idx_word_end]
-
-        start_time = words_ts_sel[0][1]
-        end_time = words_ts_sel[-1][2]
-        duration = end_time - start_time
-
-        wavfile = tgfile.replace('.TextGrid', '.wav')
-        assert os.path.isfile(wavfile), f'wav file: {wavfile} does not exist!'
-        data, params = audioread(wavfile, start_time, duration)
-        seg_list[i] = {'data': data, 'params': params}
-
-        # write the audio segment
-        seg_wavfile = wavfile.replace('.wav', f'_{idx_word_start}-{idx_word_end}.wav')
-        audiowrite(seg_wavfile, data, params)
-        print(f'{i}/{ntexts2}: wrote {seg_wavfile}')
-
-    # concatenate audio segments
-    data_list = [seg['data'] for seg in seg_list]
-    nframes_list = [seg['params'][3] for seg in seg_list]
-    data = np.concatenate(data_list)
-    nframes = sum(nframes_list)
-    params[3] = nframes
-    wavfile_concat = os.path.join(output_path, f'basic-{ref_id}_concat.wav')
-    audiowrite(wavfile_concat, data, params)
-    print(f'wrote {wavfile_concat}')
-
+        meta = {'ref-id': ref_id, 'text-nopunct': text_nopunct, 'diffusion-steps': diffusion_steps,
+                'embedding-scale': embedding_scale, 'alpha': alpha, 'beta': beta, 'hostname': hostname,
+                'gpu': gpu_info, 'exp-id': args.exp_id, 'dur-proc': durations_proc[i], 'dur-out': durations_out[i],
+                'rtf': rtfs[i]}
+        with open(out_jsonfiles[i], 'w') as fp:
+            json.dump(meta, fp, indent=2) 

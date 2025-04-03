@@ -31,6 +31,7 @@ from shutil import copyfile
 import json
 import pyloudnorm as pyln
 import phonemizer
+from pydub import AudioSegment
 
 from numpy.linalg import norm
 from librosa.util import normalize
@@ -576,7 +577,6 @@ if __name__ == '__main__':
         out_tgfiles[i] = out_wavfiles[i].replace('.wav', '.TextGrid')
         
     # write the TextGrid alignment file
-    out_tgfiles = ['' for _ in range(ntexts)]
     for i in range(ntexts):
         
         # run the force alignment command in subprocess
@@ -615,8 +615,8 @@ if __name__ == '__main__':
 
     # extract the words from tgfiles based on tgfile_tuples
     seg_list = [{} for _ in range(ntexts2)]
-
     for i in range(ntexts2):
+
         tgfile, words, idx_word_start, idx_word_end = tgfile_tuples[i]
         # words_ts = extract_word_ts(tgfile, idx_word_start=0, idx_word_end=-1)
         # words_ts_sel = word_ts[idx_word_start:idx_word_end]
@@ -644,7 +644,7 @@ if __name__ == '__main__':
         sf.write(seg_wavfile2, y, 24000)
         print(f'{i}/{ntexts2}: wrote {seg_wavfile2}')
 
-    # collect texts and audio samples in csv (before getting concatenated sample)
+    # collect meta data for the texts and audio samples (before getting concatenated sample)
     rows = [() for _ in range(ntexts2)]
     for i in range(ntexts2):
         text = texts2[i]
@@ -660,6 +660,8 @@ if __name__ == '__main__':
         dur_proc = durations_proc[i+idx_start]
         rtf = rtfs[i+idx_start]
         rows[i] = (i, text, nwords, text_current, fid, seg_id, f'{dur_proc:.3f}', f'{dur_all:.3f}', f'{rtf:.3f}', f'{dur_words:.3f}')
+
+    # write meta data to csv    
     csvfile = os.path.join(args.output_path, f'exp-{exp_id:02d}.csv')
     header = ['id', 'text', 'nwords', 'words', 'file-id', 'seg-id', 'dur-proc', 'dur-all', 'rtf', 'dur-words']
     tuple2csv(rows, csvfile, delimiter="|", header=header)
@@ -691,4 +693,4 @@ if __name__ == '__main__':
         seg = AudioSegment(data=data.tobytes(), sample_width=sample_width, frame_rate=frame_rate, channels=channels)
         combined = crossfade_segment(combined, seg, args.crossfade, type=cf_type)
     wavfile_concat_cf = os.path.join(output_path, f'basic-{ref_id}_concat_cf{args.crossfade}_t{tolerance}_M1.wav')
-    combined.export(wavfile_concat_cf, format="wav") 
+    combined.export(wavfile_concat_cf, format="wav")
